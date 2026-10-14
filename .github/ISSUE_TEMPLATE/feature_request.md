@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest an idea for this project (we do not accept pull requests)
 title: "[REQUEST]"
 labels: ''
 assignees: ''
@@ -8,7 +8,7 @@ assignees: ''
 ---
 
 > **Note:** we do not accept code contributions via Pull Requests. See the
-> [contribution policy](../../CONTRIBUTING.md)
+> CONTRIBUTING.md
 > for how we handle proposals and other ways to contribute.
 
 **Is your feature request related to a problem? Please describe.**
