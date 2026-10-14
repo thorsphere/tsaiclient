@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-> **Note:** we do not accept code contributions via Pull Requests. See the
+> **Note:** we do not accept code contributions via Pull Requests. See
 > CONTRIBUTING.md
 > for how we handle proposals and other ways to contribute.
 
