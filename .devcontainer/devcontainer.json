@@ -3,7 +3,7 @@
   "customizations": {
     "codespaces": {
       "repositories": {
-        "thorsphere/tscommit": {
+        "thorsphere/tsaiclient": {
           "permissions": {
             "contents": "write"
           }
