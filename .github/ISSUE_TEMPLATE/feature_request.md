@@ -7,6 +7,10 @@ assignees: ''
 
 ---
 
+> **Note:** we do not accept code contributions via Pull Requests. See the
+> [contribution policy](../../CONTRIBUTING.md)
+> for how we handle proposals and other ways to contribute.
+
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. E.g., I'm always frustrated when [...]
 
