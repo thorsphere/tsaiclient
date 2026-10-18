@@ -1,0 +1,136 @@
+// Copyright (c) 2026 thorsphere.
+// All Rights Reserved. Use is governed by the Functional Source License v1.1
+// (FSL-1.1-ALv2) that can be found in the LICENSE file.
+
+package tsaiclient
+
+// Import packages.
+import (
+	"context"  // Import the context package for cancellation.
+	"io"       // Import the io package for reading response bodies.
+	"net/http" // Import the http package for HTTP requests.
+	"time"     // Import the time package for timeouts.
+
+	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
+)
+
+// client implements the Client interface using a configured Provider.
+// The zero value is not usable; construct instances with New.
+type Client struct {
+	provider Provider // The AI backend implementation.
+	cfg      *Config  // The validated client configuration.
+}
+
+// Result holds a normalized completion response.
+type Result struct {
+	Content   string // The raw text returned by the model.
+	Truncated bool   // True when generation hit MaxCompletionTokens (finish_reason == "length").
+	Usage     Usage  // Token counts and cost for logging/metering.
+}
+
+// usage is the token accounting reported by the provider for one chat
+// completion. The zero value means the provider reported no usage.
+type Usage struct {
+	PromptTokens     int          `json:"prompt_tokens"`             // The number of tokens in the prompt.
+	CompletionTokens int          `json:"completion_tokens"`         // The number of tokens in the completion.
+	TotalTokens      int          `json:"total_tokens"`              // The total number of tokens billed for the call.
+	Cost             float64      `json:"cost"`                      // The completion cost in USD; zero means not reported.
+	Details          UsageDetails `json:"completion_tokens_details"` // The breakdown of the completion tokens.
+}
+
+// usageDetails breaks down the completion tokens by kind. The zero value
+// means the provider reported no details.
+type UsageDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"` // The reasoning tokens generated; zero means not reported.
+}
+
+// defaultHTTPClient is the HTTP client used for provider chat requests,
+// bounded by a 60-second timeout.
+var defaultHTTPClient = &http.Client{
+	Timeout: 60 * time.Second,
+}
+
+// New returns a Client configured with cfg. It returns an error if cfg or any
+// required setting (provider, model, or API key) is missing.
+func New(cfg *Config, provider Provider) (*Client, error) {
+	// Return an error if the configuration is nil.
+	if cfg == nil {
+		return nil, tserr.Empty("config")
+	}
+	// Return an error if the configuration is invalid.
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	// Return an error if the provider is not set.
+	if provider == nil {
+		return nil, tserr.Empty("provider")
+	}
+	// Return an error if the provider is invalid.
+	if err := provider.Validate(); err != nil {
+		return nil, err
+	}
+	// Copy the configuration to avoid mutating the original.
+	cfgCopy := *cfg
+	// Return the initialized client.
+	return &Client{cfg: &cfgCopy, provider: provider}, nil
+}
+
+// Complete sends a completion request to the configured provider and returns
+// the normalized response. It returns an error if the request fails or the
+// response is unusable.
+func (c *Client) Complete(ctx context.Context, req *Request) (Result, error) {
+	// Return an error if the client is nil.
+	if c == nil {
+		return Result{}, tserr.NilPtr()
+	}
+	// Return an error if the request is nil.
+	if req == nil {
+		return Result{}, tserr.Empty("request")
+	}
+	// Return an error if the request is invalid.
+	if err := req.Validate(); err != nil {
+		return Result{}, err
+	}
+	// Return an error if the provider is nil.
+	if c.provider == nil {
+		return Result{}, tserr.Empty("provider")
+	}
+	// Return an error if the configuration is nil.
+	if c.cfg == nil {
+		return Result{}, tserr.Empty("config")
+	}
+	// Return an error if the context is nil.
+	if ctx == nil {
+		return Result{}, tserr.Empty("context")
+	}
+	// Return an error if the context is nil.
+	if err := ctx.Err(); err != nil {
+		return Result{}, tserr.ContextDone(err)
+	}
+	// Build HTTP request
+	httpReq, err := c.provider.BuildHTTPRequest(ctx, c.cfg, req)
+	// Return an empty result and an error if building request fails.
+	if err != nil {
+		return Result{}, err
+	}
+	// Return an error if the HTTP request is nil.
+	if httpReq == nil {
+		return Result{}, tserr.Empty("http request")
+	}
+	// Send request
+	resp, err := defaultHTTPClient.Do(httpReq)
+	// Return an empty result and an error if sending request fails.
+	if err != nil {
+		return Result{}, tserr.Op(&tserr.OpArgs{Op: "send request", Fn: c.provider.Name(), Err: err})
+	}
+	// Close response body after reading
+	defer resp.Body.Close()
+	// Read response body, limiting to maxResponseBytes
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	// Return an empty result and an error if reading response body fails.
+	if err != nil {
+		return Result{}, tserr.Op(&tserr.OpArgs{Op: "read body", Fn: c.provider.Name(), Err: err})
+	}
+	// Parse the HTTP response body into a normalized Result.
+	return c.provider.ParseHTTPResponse(resp.StatusCode, respBody)
+}
