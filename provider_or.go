@@ -9,6 +9,8 @@ import (
 	"bytes"         // Import the bytes package for byte slices.
 	"context"       // Import the context package for contexts.
 	"encoding/json" // Import the json package for JSON marshaling.
+	"errors"        // Import the errors package for error handling.
+	"fmt"           // Import the fmt package for formatting.
 	"net/http"      // Import the http package for HTTP requests.
 	"os"            // Import the os package for environment variables.
 	"slices"        // Import the slices package for slice operations.
@@ -18,17 +20,20 @@ import (
 )
 
 const (
-	openRouterAPIKeyEnv           = "OPENROUTER_API_KEY"                            // The environment variable name for the OpenRouter API key.
-	openRouterBaseURL             = "https://openrouter.ai/api/v1/chat/completions" // The default OpenRouter base URL.
-	openRouterAuthHeader          = "Authorization"                                 // The authorization header name.
-	openRouterAuthValue           = "Bearer "                                       // The authorization header value prefix.
-	openRouterRefererHeader       = "HTTP-Referer"                                  // The header identifying the calling application URL.
-	openRouterTitleHeader         = "X-OpenRouter-Title"                            // The header identifying the calling application name.
-	openRouterCategoriesHeader    = "X-OpenRouter-Categories"                       // The header listing comma-separated OpenRouter app categories.
-	openRouterAppVisibilityHeader = "X-OpenRouter-App-Visibility"                   // The header controlling whether a new app is listed publicly.
-	openRouterAppVisibilityHidden = "hidden"                                        // The visibility header value that excludes a new app from public rankings.
-	openRouterMaxCategoryLen      = 30                                              // The maximum length in bytes of a single OpenRouter category slug.
-	openRouterDataCollectionDeny  = "deny"                                          // openRouterDataCollectionDeny is the OpenRouter data collection policy valuethat forbids upstream providers from retaining or training on prompts.
+	openRouterAPIKeyEnv                 = "OPENROUTER_API_KEY"                            // The environment variable name for the OpenRouter API key.
+	openRouterBaseURL                   = "https://openrouter.ai/api/v1/chat/completions" // The default OpenRouter base URL.
+	openRouterAuthHeader                = "Authorization"                                 // The authorization header name.
+	openRouterAuthValue                 = "Bearer "                                       // The authorization header value prefix.
+	openRouterRefererHeader             = "HTTP-Referer"                                  // The header identifying the calling application URL.
+	openRouterTitleHeader               = "X-OpenRouter-Title"                            // The header identifying the calling application name.
+	openRouterCategoriesHeader          = "X-OpenRouter-Categories"                       // The header listing comma-separated OpenRouter app categories.
+	openRouterAppVisibilityHeader       = "X-OpenRouter-App-Visibility"                   // The header controlling whether a new app is listed publicly.
+	openRouterAppVisibilityHidden       = "hidden"                                        // The visibility header value that excludes a new app from public rankings.
+	openRouterMaxCategoryLen            = 30                                              // The maximum length in bytes of a single OpenRouter category slug.
+	openRouterDataCollectionDeny        = "deny"                                          // openRouterDataCollectionDeny is the OpenRouter data collection policy valuethat forbids upstream providers from retaining or training on prompts.
+	openRouterFinishReasonLength        = "length"                                        // The provider finish reason indicating the generated message was truncated by the token limit.
+	openRouterFinishReasonContentFilter = "content_filter"                                // The provider finish reason indicating the response was blocked by the provider's content filter.
+	openRouterFinishReasonError         = "error"                                         // The provider finish reason indicating generation failed on the provider side.
 )
 
 // openRouterProviderPref configures OpenRouter upstream routing and
@@ -38,14 +43,55 @@ type openRouterProviderPref struct {
 	ZDR            bool   `json:"zdr,omitempty"`             // Set to true in privacy mode to restrict routing to Zero Data Retention endpoints.
 }
 
-// requestPayload is the JSON body sent to the provider chat endpoint.
+// openRouterRequestPayload is the JSON body sent to the provider chat endpoint.
 type openRouterRequestPayload struct {
 	Model               string                  `json:"model"`                           // The model identifier for the request.
-	Messages            []message               `json:"messages"`                        // The conversation messages, oldest first.
+	Messages            []openRouterMessage     `json:"messages"`                        // The conversation messages, oldest first.
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"` // The maximum number of tokens the model may generate; omitted when zero.
 	Temperature         float64                 `json:"temperature,omitempty"`           // The sampling temperature; omitted when zero.
 	SessionID           string                  `json:"session_id,omitempty"`            // The sticky routing key for prompt-cache affinity; omitted when empty.
 	Provider            *openRouterProviderPref `json:"provider,omitempty"`              // Upstream routing and privacy preferences; omitted when nil.
+}
+
+// openRouterMessage is a single chat message exchanged with the provider.
+type openRouterMessage struct {
+	Role    string `json:"role"`    // The conversational role, e.g. "user" or "assistant".
+	Content string `json:"content"` // The message text.
+}
+
+// openRouterResponsePayload is the provider chat completion response body.
+// The zero value means no completion was returned.
+type openRouterResponsePayload struct {
+	Choices []struct {
+		Message      openRouterMessage `json:"message"`         // The generated message for this choice.
+		FinishReason string            `json:"finish_reason"`   // Why generation stopped, e.g. "stop" or "length".
+		Error        *openRouterError  `json:"error,omitempty"` // Mid-generation error embedded in the choice on 200 OK.
+	} `json:"choices"` // The completion choices returned by the model.
+	Usage Usage            `json:"usage"`           // The token accounting for the completion.
+	Error *openRouterError `json:"error,omitempty"` // Top-level error returned when upstream fails after 200 OK headers.
+}
+
+// openRouterErrorMetadata holds structured diagnostic fields attached to an
+// OpenRouter error object.
+type openRouterErrorMetadata struct {
+	ErrorType    string   `json:"error_type,omitempty"`    // Canonical OpenRouter error category (e.g. "rate_limit_exceeded").
+	ProviderName string   `json:"provider_name,omitempty"` // Name of the upstream provider that reported the error.
+	ProviderCode string   `json:"provider_code,omitempty"` // Original upstream provider error code.
+	RemedyHint   string   `json:"remedy_hint,omitempty"`   // Actionable next step for budget limit errors.
+	Reasons      []string `json:"reasons,omitempty"`       // Moderation reasons when input was flagged.
+}
+
+// openRouterError is the error detail object returned by OpenRouter at the
+// top level or inside a completion choice.
+type openRouterError struct {
+	Code     int                      `json:"code"`               // The HTTP status code associated with the error.
+	Message  string                   `json:"message"`            // The human-readable error message.
+	Metadata *openRouterErrorMetadata `json:"metadata,omitempty"` // Optional structured error metadata.
+}
+
+// openRouterErrorResponse is the provider error body returned for non-2xx responses.
+type openRouterErrorResponse struct {
+	Error openRouterError `json:"error"` // The error details.
 }
 
 // OpenRouter implements Provider for the OpenRouter Chat Completions API.
@@ -128,9 +174,11 @@ func (p *OpenRouter) Name() string {
 	return "OpenRouter"
 }
 
+// BuildHTTPRequest returns an authenticated HTTP POST request bound to ctx
+// for the OpenRouter chat completions endpoint using cfg and req. It returns
+// an error if p, cfg, or req is nil or invalid, or if marshaling the payload
+// or constructing the HTTP request fails.
 func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Request) (*http.Request, error) {
-	// OpenRouter URL, headers, extraBody, and JSON marshaling directly here
-
 	// Return an error if the provider is nil.
 	if p == nil {
 		return nil, tserr.NilPtr()
@@ -156,13 +204,13 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 		return nil, err
 	}
 	// Initialize the conversation message list.
-	var messages []message
+	var messages []openRouterMessage
 	// Prepend the system message when a system prompt is provided.
 	if strings.TrimSpace(req.SystemPrompt) != "" {
-		messages = append(messages, message{Role: "system", Content: req.SystemPrompt})
+		messages = append(messages, openRouterMessage{Role: "system", Content: req.SystemPrompt})
 	}
 	// Append the user prompt message.
-	messages = append(messages, message{Role: "user", Content: req.Prompt})
+	messages = append(messages, openRouterMessage{Role: "user", Content: req.Prompt})
 	// Build payload
 	payload := openRouterRequestPayload{
 		Model:               cfg.model,
@@ -215,8 +263,132 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 	return httpReq, nil
 }
 
+// ParseHTTPResponse parses the HTTP statusCode and response body from the
+// OpenRouter chat completions endpoint and returns a normalized Result. It
+// returns an error if p is nil, the status code or payload indicates an
+// upstream error, the response cannot be unmarshaled, or no usable completion
+// content was produced.
 func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, error) {
-	// OpenRouter response parsing directly here
+	// Return an error if the provider is nil.
+	if p == nil {
+		return Result{}, tserr.NilPtr()
+	}
+	// Handle non-2xx HTTP responses.
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		// Declare the error envelope to decode into.
+		var errRes openRouterErrorResponse
+		// Attempt to parse the structured OpenRouter error body.
+		if err := json.Unmarshal(body, &errRes); err == nil && errRes.Error.Message != "" {
+			// Return the provider error enriched with metadata and status advice.
+			return Result{}, openRouterProviderError(p.Name(), statusCode, errRes.Error)
+		}
+		// Fall back to a status-code error when the body carries no error message.
+		return Result{}, statusError(p.Name(), statusCode)
+	}
+	// Unmarshal the 2xx response body.
+	var res openRouterResponsePayload
+	if err := json.Unmarshal(body, &res); err != nil {
+		// Return an error if unmarshaling the response payload fails.
+		return Result{}, tserr.Op(&tserr.OpArgs{Op: "unmarshal response", Fn: p.Name(), Err: err})
+	}
+	// Check for a top-level error returned inside a 200 OK body when upstream failed after headers were sent.
+	if res.Error != nil && res.Error.Message != "" {
+		// Use the embedded error code when present, falling back to HTTP 502.
+		code := res.Error.Code
+		if code == 0 {
+			code = http.StatusBadGateway
+		}
+		// Return the structured provider error.
+		return Result{}, openRouterProviderError(p.Name(), code, *res.Error)
+	}
+	// Return an error if the response contains no completion choices.
+	if len(res.Choices) == 0 {
+		return Result{}, tserr.Empty(p.Name() + " response choices")
+	}
+	// Select the first completion choice.
+	choice := res.Choices[0]
+	// Check for a mid-generation error embedded inside the completion choice.
+	if choice.Error != nil && choice.Error.Message != "" {
+		// Use the choice error code when present, falling back to HTTP 502.
+		code := choice.Error.Code
+		if code == 0 {
+			code = http.StatusBadGateway
+		}
+		// Return the structured provider error.
+		return Result{}, openRouterProviderError(p.Name(), code, *choice.Error)
+	}
+	// Reject responses flagged as blocked or failed by finish_reason.
+	switch choice.FinishReason {
+	case openRouterFinishReasonContentFilter:
+		// Return an error when generation was stopped by a content filter.
+		return Result{}, tserr.Op(&tserr.OpArgs{
+			Op:  "generate completion",
+			Fn:  p.Name(),
+			Err: errors.New("response blocked by content filter"),
+		})
+	case openRouterFinishReasonError:
+		// Return an error when the provider reported a generation error without a choice error body.
+		return Result{}, tserr.Op(&tserr.OpArgs{
+			Op:  "generate completion",
+			Fn:  p.Name(),
+			Err: errors.New("provider reported a generation error"),
+		})
+	}
+	// Extract the generated text content.
+	content := choice.Message.Content
+	// Return an error when no content was generated.
+	if content == "" {
+		// Report when a reasoning model exhausted max_completion_tokens on reasoning before emitting content.
+		if choice.FinishReason == openRouterFinishReasonLength && res.Usage.Details.ReasoningTokens > 0 {
+			return Result{}, tserr.Op(&tserr.OpArgs{
+				Op:  "generate completion",
+				Fn:  p.Name(),
+				Err: errors.New("reasoning tokens exhausted max_completion_tokens before content was generated"),
+			})
+		}
+		// Return an empty-content error for cold starts or empty upstream responses.
+		return Result{}, tserr.Empty(p.Name() + " completion content")
+	}
+	// Return the normalized completion result.
+	return Result{
+		Content:   content,
+		Truncated: choice.FinishReason == openRouterFinishReasonLength,
+		Usage:     res.Usage,
+	}, nil
+}
+
+// openRouterProviderError returns an error for an OpenRouter error payload,
+// combining the error code, message, structured metadata, and status advice.
+func openRouterProviderError(name string, status int, apiErr openRouterError) error {
+	// Start with the human-readable error message.
+	detail := apiErr.Message
+	// Append metadata context when OpenRouter included structured metadata.
+	if m := apiErr.Metadata; m != nil {
+		// Include the canonical error type and upstream provider name when present.
+		if m.ErrorType != "" {
+			detail += fmt.Sprintf(" (type: %s)", m.ErrorType)
+		}
+		// Include moderation reasons when input was flagged.
+		if len(m.Reasons) > 0 {
+			detail += fmt.Sprintf(" [reasons: %s]", strings.Join(m.Reasons, ", "))
+		}
+		// Include the budget remedy hint when present.
+		if m.RemedyHint != "" {
+			detail += "; " + m.RemedyHint
+		}
+	}
+	// Prefix the numeric error code when reported.
+	if apiErr.Code != 0 {
+		detail = fmt.Sprintf("%d: %s", apiErr.Code, detail)
+	}
+	// Append actionable status advice when no specific remedy hint was already provided.
+	if apiErr.Metadata == nil || apiErr.Metadata.RemedyHint == "" {
+		if advice := statusAdvice(status); advice != "" {
+			detail += "; " + advice
+		}
+	}
+	// Return the provider error wrapped with the provider name.
+	return tserr.NotAvailable(&tserr.NotAvailableArgs{S: name, Err: errors.New(detail)})
 }
 
 // Validate validates the OpenRouter provider configuration and environment.
