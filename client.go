@@ -28,20 +28,14 @@ type Result struct {
 	Usage     Usage  // Token counts and cost for logging/metering.
 }
 
-// usage is the token accounting reported by the provider for one chat
-// completion. The zero value means the provider reported no usage.
+// Usage is the normalized token and cost accounting reported by a provider for
+// one chat completion. The zero value means the provider reported no usage.
 type Usage struct {
-	PromptTokens     int          `json:"prompt_tokens"`             // The number of tokens in the prompt.
-	CompletionTokens int          `json:"completion_tokens"`         // The number of tokens in the completion.
-	TotalTokens      int          `json:"total_tokens"`              // The total number of tokens billed for the call.
-	Cost             float64      `json:"cost"`                      // The completion cost in USD; zero means not reported.
-	Details          UsageDetails `json:"completion_tokens_details"` // The breakdown of the completion tokens.
-}
-
-// usageDetails breaks down the completion tokens by kind. The zero value
-// means the provider reported no details.
-type UsageDetails struct {
-	ReasoningTokens int `json:"reasoning_tokens"` // The reasoning tokens generated; zero means not reported.
+	PromptTokens     int     // The number of tokens in the prompt.
+	CompletionTokens int     // The number of tokens in the completion.
+	ReasoningTokens  int     // The reasoning tokens generated; zero means not reported.
+	TotalTokens      int     // The total number of tokens billed for the call.
+	Cost             float64 // The completion cost in USD; zero means not reported.
 }
 
 // defaultHTTPClient is the HTTP client used for provider chat requests,

@@ -67,7 +67,7 @@ type openRouterResponsePayload struct {
 		FinishReason string            `json:"finish_reason"`   // Why generation stopped, e.g. "stop" or "length".
 		Error        *openRouterError  `json:"error,omitempty"` // Mid-generation error embedded in the choice on 200 OK.
 	} `json:"choices"` // The completion choices returned by the model.
-	Usage Usage            `json:"usage"`           // The token accounting for the completion.
+	Usage openRouterUsage  `json:"usage"`           // The token accounting for the completion.
 	Error *openRouterError `json:"error,omitempty"` // Top-level error returned when upstream fails after 200 OK headers.
 }
 
@@ -92,6 +92,17 @@ type openRouterError struct {
 // openRouterErrorResponse is the provider error body returned for non-2xx responses.
 type openRouterErrorResponse struct {
 	Error openRouterError `json:"error"` // The error details.
+}
+
+// openRouterUsage is the token accounting object in the OpenRouter response body.
+type openRouterUsage struct {
+	PromptTokens     int     `json:"prompt_tokens"`     // The number of tokens in the prompt.
+	CompletionTokens int     `json:"completion_tokens"` // The number of tokens in the completion.
+	TotalTokens      int     `json:"total_tokens"`      // The total number of tokens billed for the call.
+	Cost             float64 `json:"cost"`              // The completion cost in USD.
+	Details          struct {
+		ReasoningTokens int `json:"reasoning_tokens"` // The reasoning tokens generated.
+	} `json:"completion_tokens_details"` // The breakdown of completion tokens.
 }
 
 // OpenRouter implements Provider for the OpenRouter Chat Completions API.
@@ -353,7 +364,13 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	return Result{
 		Content:   content,
 		Truncated: choice.FinishReason == openRouterFinishReasonLength,
-		Usage:     res.Usage,
+		Usage: Usage{
+			PromptTokens:     res.Usage.PromptTokens,
+			CompletionTokens: res.Usage.CompletionTokens,
+			ReasoningTokens:  res.Usage.Details.ReasoningTokens,
+			TotalTokens:      res.Usage.TotalTokens,
+			Cost:             res.Usage.Cost,
+		},
 	}, nil
 }
 
