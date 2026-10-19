@@ -14,34 +14,6 @@ import (
 // reasoningEffortList is a list of valid reasoning effort levels.
 var reasoningEffortList = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
 
-// Defaults for provider request settings.
-const (
-	defaultModel               = "tencent/hy4-preview" // The default model identifier.
-	defaultMaxCompletionTokens = 0                     // The default cap on generated tokens. Zero means no cap.
-	defaultTemperature         = 1.0                   // The default sampling temperature.
-	defaultReasoningEffort     = "medium"              // The default reasoning effort level.
-)
-
-// finishReasonLength is the provider finish reason indicating the generated
-// message was truncated by the token limit.
-const finishReasonLength = "length"
-
-// finishReasonContentFilter is the provider finish reason indicating the
-// response was blocked by the provider's content filter.
-const finishReasonContentFilter = "content_filter"
-
-// finishReasonError is the provider finish reason indicating generation
-// failed on the provider side.
-const finishReasonError = "error"
-
-// statusEdgeTimeout is the non-standard status code edge networks (e.g.
-// Cloudflare) return when the upstream provider timed out.
-const statusEdgeTimeout = 524
-
-// statusProviderOverloaded is the non-standard status code the provider
-// returns when its upstream is temporarily overloaded.
-const statusProviderOverloaded = 529
-
 // maxResponseBytes is the maximum number of bytes to read from the response body.
 const maxResponseBytes = 1024 * 1024 // 1 MiB
 
@@ -54,20 +26,20 @@ type Config struct {
 	reasoningEffort     string  // The default reasoning effort level (e.g. "low", "medium", "high").
 }
 
-// withModel sets the model identifier and returns cfg.
-func (cfg *Config) withModel(model string) *Config {
+// WithModel sets the model identifier and returns cfg.
+func (cfg *Config) WithModel(model string) *Config {
 	cfg.model = model
 	return cfg
 }
 
-// withMaxCompletionTokens sets the generation token cap and returns cfg.
-func (cfg *Config) withMaxCompletionTokens(maxCompletionTokens int) *Config {
+// WithMaxCompletionTokens sets the generation token cap and returns cfg.
+func (cfg *Config) WithMaxCompletionTokens(maxCompletionTokens int) *Config {
 	cfg.maxCompletionTokens = maxCompletionTokens
 	return cfg
 }
 
-// withTemperature sets the sampling temperature and returns cfg.
-func (cfg *Config) withTemperature(temperature float64) *Config {
+// WithTemperature sets the sampling temperature and returns cfg.
+func (cfg *Config) WithTemperature(temperature float64) *Config {
 	cfg.temperature = temperature
 	return cfg
 }
