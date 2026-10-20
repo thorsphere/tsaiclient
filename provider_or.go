@@ -217,18 +217,18 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 	// Initialize the conversation message list.
 	var messages []openRouterMessage
 	// Prepend the system message when a system prompt is provided.
-	if strings.TrimSpace(req.SystemPrompt) != "" {
-		messages = append(messages, openRouterMessage{Role: "system", Content: req.SystemPrompt})
+	if strings.TrimSpace(req.systemPrompt) != "" {
+		messages = append(messages, openRouterMessage{Role: "system", Content: req.systemPrompt})
 	}
 	// Append the user prompt message.
-	messages = append(messages, openRouterMessage{Role: "user", Content: req.Prompt})
+	messages = append(messages, openRouterMessage{Role: "user", Content: req.prompt})
 	// Build payload
 	payload := openRouterRequestPayload{
 		Model:               cfg.model,
 		Messages:            messages,
 		MaxCompletionTokens: cfg.maxCompletionTokens,
 		Temperature:         cfg.temperature,
-		SessionID:           req.SessionID,
+		SessionID:           req.sessionID,
 	}
 	// Attach strict privacy routing preferences when privacy mode is enabled.
 	if p.privacy {

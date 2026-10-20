@@ -12,26 +12,30 @@ import (
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
 )
 
+// maxSessionIDLen is the maximum length in bytes of a request session ID.
+const maxSessionIDLen = 256
+
 // Request represents a provider-agnostic completion request.
+// The zero value is not usable; construct instances with NewRequest.
 type Request struct {
-	SystemPrompt string // Optional system instruction guiding the model's behavior. An empty string means no system prompt.
-	Prompt       string // The user prompt to complete.
-	SessionID    string // Optional sticky routing key for prompt-cache affinity.
+	systemPrompt string // Optional system instruction guiding the model's behavior. An empty string means no system prompt.
+	prompt       string // The user prompt to complete.
+	sessionID    string // Optional sticky routing key for prompt-cache affinity.
 }
 
-// NewRequest returns a new Request with the given prompt. It returns an error
-// if the prompt is empty. The session ID is generated automatically.
+// NewRequest returns a new Request with the given prompt. It returns an error if prompt is empty or whitespace-only.
+// The session ID is generated automatically.
 func NewRequest(prompt string) (*Request, error) {
 	// Initialize a new request.
 	req := &Request{}
 	// Set the prompt.
-	req.Prompt = prompt
-	// Generate a new session ID if one is not provided.
+	req.prompt = prompt
+	// Generate a new session ID.
 	if err := req.NewSessionID(); err != nil {
 		// Return an error if generating a new session ID fails.
 		return nil, tserr.Op(&tserr.OpArgs{Op: "new session ID", Fn: "request.NewSessionID", Err: err})
 	}
-	// Return an error if validating the request fails.
+	// Validate the request.
 	if err := req.Validate(); err != nil {
 		// Return an error if validating the request fails.
 		return nil, err
@@ -44,7 +48,17 @@ func NewRequest(prompt string) (*Request, error) {
 func (req *Request) WithSystemPrompt(systemPrompt string) *Request {
 	// Set the system prompt when the request is non-nil.
 	if req != nil {
-		req.SystemPrompt = systemPrompt
+		req.systemPrompt = systemPrompt
+	}
+	// Return the updated request.
+	return req
+}
+
+// WithSessionID sets the session ID and returns req.
+func (req *Request) WithSessionID(sessionID string) *Request {
+	// Set the session ID when the request is non-nil.
+	if req != nil {
+		req.sessionID = sessionID
 	}
 	// Return the updated request.
 	return req
@@ -58,25 +72,27 @@ func (req *Request) NewSessionID() error {
 		return tserr.Empty("request")
 	}
 	// Return a cryptographically random text identifier.
-	req.SessionID = rand.Text()
+	req.sessionID = rand.Text()
+	// Return no error to indicate success.
 	return nil
 }
 
-// Validate validates the request. Returns an error if the request is invalid, or nil if it is valid.
+// Validate returns an error if req is nil, has an empty prompt, or has a
+// session ID exceeding 256 bytes.
 func (req *Request) Validate() error {
 	// Return an error if the request is nil.
 	if req == nil {
 		return tserr.Empty("request")
 	}
 	// Session ID must be less than or equal to 256 characters, otherwise return an error.
-	if len(req.SessionID) > 256 {
+	if len(req.sessionID) > maxSessionIDLen {
 		return tserr.Lower(&tserr.LowerArgs{
-			Var:         "session ID",
-			HigherBound: 256,
-			Actual:      int64(len(req.SessionID))})
+			Var:         "session ID length",
+			HigherBound: maxSessionIDLen,
+			Actual:      int64(len(req.sessionID))})
 	}
 	// If the prompt is empty, return an error.
-	if strings.TrimSpace(req.Prompt) == "" {
+	if strings.TrimSpace(req.prompt) == "" {
 		return tserr.Empty("prompt")
 	}
 	// Return no error to indicate success.
