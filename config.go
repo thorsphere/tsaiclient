@@ -6,9 +6,17 @@ package tsaiclient
 
 // Import packages.
 import (
+	"fmt"     // Import the fmt package for formatting.
+	"math"    // Import the math package for floating-point checks.
+	"slices"  // Import the slices package for slice membership checks.
 	"strings" // Import the strings package for string manipulation.
 
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
+)
+
+const (
+	minTemperature = 0.0 // The minimum allowed sampling temperature.
+	maxTemperature = 2.0 // The maximum allowed sampling temperature.
 )
 
 // reasoningEffortList is a list of valid reasoning effort levels.
@@ -23,30 +31,62 @@ type Config struct {
 	model               string  // The model identifier passed to the provider.
 	maxCompletionTokens int     // The default cap on generated tokens per call. Zero means no cap.
 	temperature         float64 // The default sampling temperature.
-	reasoningEffort     string  // The default reasoning effort level (e.g. "low", "medium", "high").
+	reasoningEffort     string  // Optional reasoning effort level (e.g. "low", "medium", "high"). Empty means omitted so the model default applies.
 }
 
-// WithModel sets the model identifier and returns cfg.
+// NewConfig returns a new Config for model with default settings. It returns
+// an error if model is empty or whitespace-only.
+func NewConfig(model string) (*Config, error) {
+	// Initialize a new configuration.
+	cfg := &Config{}
+	// Set the model identifier.
+	cfg.WithModel(model)
+	// Validate the configuration.
+	if err := cfg.Validate(); err != nil {
+		// Return an error if validating the configuration fails.
+		return nil, err
+	}
+	// Return the initialized configuration.
+	return cfg, nil
+}
+
+// WithModel sets the model identifier and returns cfg. Parameter model is trimmed of leading and trailing whitespace.
 func (cfg *Config) WithModel(model string) *Config {
-	cfg.model = model
+	// Set the model identifier if cfg is not nil.
+	if cfg != nil {
+		cfg.model = strings.TrimSpace(model)
+	}
+	// Return the configuration.
 	return cfg
 }
 
 // WithMaxCompletionTokens sets the generation token cap and returns cfg.
 func (cfg *Config) WithMaxCompletionTokens(maxCompletionTokens int) *Config {
-	cfg.maxCompletionTokens = maxCompletionTokens
+	// Set the generation token cap if cfg is not nil.
+	if cfg != nil {
+		cfg.maxCompletionTokens = maxCompletionTokens
+	}
+	// Return the configuration.
 	return cfg
 }
 
 // WithTemperature sets the sampling temperature and returns cfg.
 func (cfg *Config) WithTemperature(temperature float64) *Config {
-	cfg.temperature = temperature
+	// Set the sampling temperature if cfg is not nil.
+	if cfg != nil {
+		cfg.temperature = temperature
+	}
+	// Return the configuration.
 	return cfg
 }
 
-// WithReasoningEffort sets the reasoning effort level and returns cfg.
+// WithReasoningEffort sets the reasoning effort level and returns cfg. Parameter effort is trimmed of leading and trailing whitespace.
 func (cfg *Config) WithReasoningEffort(effort string) *Config {
-	cfg.reasoningEffort = effort
+	// Set the reasoning effort level if cfg is not nil.
+	if cfg != nil {
+		cfg.reasoningEffort = strings.TrimSpace(effort)
+	}
+	// Return the configuration.
 	return cfg
 }
 
@@ -58,7 +98,7 @@ func (cfg *Config) Validate() error {
 		return tserr.Empty("config")
 	}
 	// model must be non-empty, otherwise return an error.
-	if cfg.model == "" {
+	if strings.TrimSpace(cfg.model) == "" {
 		return tserr.Empty("model")
 	}
 	// max completion tokens must be greater than or equal to 0, otherwise return an error.
@@ -68,28 +108,29 @@ func (cfg *Config) Validate() error {
 			LowerBound: 0,
 			Actual:     int64(cfg.maxCompletionTokens)})
 	}
-	// "reasoning effort" must be one of the allowed values, otherwise return an error.
-	found := false
-	for _, effort := range reasoningEffortList {
-		if cfg.reasoningEffort == effort {
-			found = true
-			break
-		}
-	}
-	// If reasoning effort is not one of the allowed values, return an error.
-	if !found {
+	// When reasoning effort is set, it must be one of the allowed values.
+	if cfg.reasoningEffort != "" && !slices.Contains(reasoningEffortList, cfg.reasoningEffort) {
 		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
 			F:      "reasoning effort",
 			Value:  cfg.reasoningEffort,
-			Detail: "expected one of: " + strings.Join(reasoningEffortList, ", ")})
+			Detail: "expected one of: " + strings.Join(reasoningEffortList, ", "),
+		})
 	}
-	// Temperature must be between 0 and 2, otherwise return an error.
-	if cfg.temperature < 0 {
-		return tserr.Higherf(&tserr.HigherfArgs{Var: "temperature", LowerBound: 0, Actual: cfg.temperature})
+	// Temperature must be a number, otherwise return an error.
+	if math.IsNaN(cfg.temperature) {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      "configuration temperature",
+			Value:  fmt.Sprintf("%v", math.NaN()),
+			Detail: "expected a number between 0 and 2",
+		})
 	}
-	// Temperature must be below 2, otherwise return an error.
-	if cfg.temperature > 2 {
-		return tserr.Lowerf(&tserr.LowerfArgs{Var: "temperature", HigherBound: 2, Actual: cfg.temperature})
+	// Temperature must be at least minTemperature, otherwise return an error.
+	if cfg.temperature < minTemperature {
+		return tserr.Higherf(&tserr.HigherfArgs{Var: "temperature", LowerBound: minTemperature, Actual: cfg.temperature})
+	}
+	// Temperature must be at most maxTemperature, otherwise return an error.
+	if cfg.temperature > maxTemperature {
+		return tserr.Lowerf(&tserr.LowerfArgs{Var: "temperature", HigherBound: maxTemperature, Actual: cfg.temperature})
 	}
 	// Return no error to indicate success.
 	return nil

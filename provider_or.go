@@ -49,6 +49,7 @@ type openRouterRequestPayload struct {
 	Messages            []openRouterMessage     `json:"messages"`                        // The conversation messages, oldest first.
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"` // The maximum number of tokens the model may generate; omitted when zero.
 	Temperature         float64                 `json:"temperature,omitempty"`           // The sampling temperature; omitted when zero.
+	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`      // The reasoning effort level; omitted when empty.
 	SessionID           string                  `json:"session_id,omitempty"`            // The sticky routing key for prompt-cache affinity; omitted when empty.
 	Provider            *openRouterProviderPref `json:"provider,omitempty"`              // Upstream routing and privacy preferences; omitted when nil.
 }
@@ -228,6 +229,7 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 		Messages:            messages,
 		MaxCompletionTokens: cfg.maxCompletionTokens,
 		Temperature:         cfg.temperature,
+		ReasoningEffort:     cfg.reasoningEffort,
 		SessionID:           req.sessionID,
 	}
 	// Attach strict privacy routing preferences when privacy mode is enabled.
