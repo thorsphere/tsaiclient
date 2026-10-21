@@ -48,6 +48,7 @@ func TestNewRequest(t *testing.T) {
 			t.Parallel()
 			// Create a new request and check whether the error matches expectations.
 			_, err := tsaiclient.NewRequest(tt.prompt)
+			// Check whether the error matches expectations.
 			if (err != nil) != tt.wantErr {
 				// Fail the test if the error presence does not match wantErr.
 				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
@@ -121,6 +122,8 @@ func TestRequestValidate(t *testing.T) {
 
 // TestRequestValidateNil tests the validation logic of Request.Validate when the request is nil.
 func TestRequestValidateNil(t *testing.T) {
+	// Run test in parallel.
+	t.Parallel()
 	// Create a nil request.
 	var req *tsaiclient.Request
 	// Validate the request and check whether an error is returned.
@@ -132,6 +135,8 @@ func TestRequestValidateNil(t *testing.T) {
 
 // TestRequestValidateEmpty tests the validation logic of Request.Validate when the request is empty.
 func TestRequestValidateEmpty(t *testing.T) {
+	// Run test in parallel.
+	t.Parallel()
 	// Create an empty request.
 	req := &tsaiclient.Request{}
 	// Validate the request and check whether an error is returned.
@@ -141,9 +146,25 @@ func TestRequestValidateEmpty(t *testing.T) {
 	}
 }
 
+// TestRequestWithBuildersNil tests that WithSystemPrompt and WithSessionID
+// safely handle a nil Request receiver.
+func TestRequestWithBuildersNil(t *testing.T) {
+	// Run test in parallel.
+	t.Parallel()
+	// Declare a nil request.
+	var req *tsaiclient.Request
+	// Verify WithSystemPrompt and WithSessionID return nil without panicking.
+	if got := req.WithSystemPrompt("system").WithSessionID("session"); got != nil {
+		// Fail the test if a non-nil request was returned.
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "WithSystemPrompt/WithSessionID"}))
+	}
+}
+
 // TestRequestNewSessionIDNil tests the session ID generation logic of Request.NewSessionID
 // when the request is nil.
 func TestRequestNewSessionIDNil(t *testing.T) {
+	// Run test in parallel.
+	t.Parallel()
 	// Create a nil request.
 	var req *tsaiclient.Request
 	// Generate a new session ID and check whether an error is returned.
@@ -187,11 +208,8 @@ func TestRequestNewSessionID(t *testing.T) {
 			}
 			// Set the session ID.
 			req.WithSessionID(tt.sessionID)
-			// Record the previous session ID when the request is non-nil.
-			var prevID string
-			if req != nil {
-				prevID = req.GetSessionID()
-			}
+			// Record the previous session ID before regenerating.
+			prevID := req.GetSessionID()
 			// Generate a new session ID and check whether the error matches expectations.
 			if err := req.NewSessionID(); err != nil {
 				// Fail the test if the error presence does not match wantErr.

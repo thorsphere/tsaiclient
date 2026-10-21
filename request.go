@@ -65,13 +65,13 @@ func (req *Request) WithSessionID(sessionID string) *Request {
 }
 
 // NewSessionID generates a new session ID for the request. It returns an error
-// if the request is nil.
+// if req is nil.
 func (req *Request) NewSessionID() error {
 	// Return an error if the request is nil.
 	if req == nil {
 		return tserr.Empty("request")
 	}
-	// Return a cryptographically random text identifier.
+	// Assign a cryptographically random text identifier.
 	req.sessionID = rand.Text()
 	// Return no error to indicate success.
 	return nil
