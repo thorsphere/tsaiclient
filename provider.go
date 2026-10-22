@@ -10,18 +10,19 @@ import (
 	"fmt"      // Import the fmt package for formatting.
 	"net/http" // Import the http package for HTTP requests.
 	"net/url"  // Import the url package for URL parsing.
+	"strconv"  // Import the strconv package for numeric port validation.
 	"strings"  // Import the strings package for string operations.
 
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
 )
 
-// statusEdgeTimeout is the non-standard status code edge networks (e.g.
-// Cloudflare) return when the upstream provider timed out.
-const statusEdgeTimeout = 524
-
-// statusProviderOverloaded is the non-standard status code the provider
-// returns when its upstream is temporarily overloaded.
-const statusProviderOverloaded = 529
+// Provider HTTP status codes and TCP port bounds.
+const (
+	statusEdgeTimeout        = 524   // The non-standard status code edge networks (e.g. Cloudflare) return when the upstream provider timed out.
+	statusProviderOverloaded = 529   // The non-standard status code the provider returns when its upstream is temporarily overloaded.
+	minPort                  = 1     // The minimum valid TCP port number.
+	maxPort                  = 65535 // The maximum valid TCP port number.
+)
 
 // Provider describes how to format requests for and parse responses from an AI backend and
 // how to handle privacy-related settings.
@@ -33,41 +34,85 @@ type Provider interface {
 	ParseHTTPResponse(statusCode int, body []byte) (Result, error)                          // Parse an HTTP response from the provider.
 }
 
-// validateEndpointURL returns an error if rawURL is empty, cannot be parsed,
-// does not use the https scheme, or has no host. It returns no error when
-// rawURL is an absolute HTTPS URL with a host.
-func validateEndpointURL(rawURL string) error {
-	// Trim whitespace from rawURL.
-	rawURL = strings.TrimSpace(rawURL)
-	// Return an error if the endpoint URL is empty.
-	if rawURL == "" {
-		return tserr.Empty("endpoint URL")
+// validateHTTPSURL returns an error if rawURL is empty, contains whitespace,
+// cannot be parsed as a hierarchical HTTPS URL with a valid host and optional
+// port, or contains user credentials. Parameter field names the URL setting in
+// returned errors.
+func validateHTTPSURL(field, rawURL string) error {
+	// Return an error if the URL is empty or whitespace-only.
+	if strings.TrimSpace(rawURL) == "" {
+		return tserr.Empty(field)
 	}
-	// Parse the endpoint URL to inspect its components.
+	// Return an error if the URL contains any whitespace.
+	if strings.ContainsAny(rawURL, " \t\r\n") {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      field,
+			Value:  rawURL,
+			Detail: "unexpected whitespace",
+		})
+	}
+	// Parse the URL to inspect its components.
 	u, err := url.Parse(rawURL)
-	// Return an error if the endpoint URL cannot be parsed.
+	// Return an error if the URL cannot be parsed.
 	if err != nil {
 		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
-			F:      "endpoint URL",
+			F:      field,
 			Value:  rawURL,
 			Detail: err.Error(),
 		})
 	}
-	// Return an error if the endpoint URL does not use HTTPS.
+	// Return an error if the URL is opaque rather than hierarchical.
+	if u.Opaque != "" {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      field,
+			Value:  rawURL,
+			Detail: "unexpected opaque URL",
+		})
+	}
+	// Return an error if the URL does not use HTTPS.
 	if u.Scheme != "https" {
 		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
-			F:      "endpoint URL",
+			F:      field,
 			Value:  rawURL,
 			Detail: "expected scheme https",
 		})
 	}
-	// Return an error if the endpoint URL has no host.
+	// Return an error if the URL contains user credentials.
+	if u.User != nil {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      field,
+			Value:  rawURL,
+			Detail: "unexpected user credentials",
+		})
+	}
+	// Return an error if the URL has no host.
 	if u.Hostname() == "" {
 		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
-			F:      "endpoint URL",
+			F:      field,
 			Value:  rawURL,
 			Detail: "expected a host",
 		})
+	}
+	// Return an error if the host has a trailing colon with an empty port.
+	if strings.HasSuffix(u.Host, ":") {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      field,
+			Value:  rawURL,
+			Detail: "empty port",
+		})
+	}
+	// Validate the port number when an explicit port is present.
+	if portStr := u.Port(); portStr != "" {
+		// Parse the port string as an integer.
+		port, err := strconv.Atoi(portStr)
+		// Return an error if the port overflows or is outside [1, 65535].
+		if err != nil || port < minPort || port > maxPort {
+			return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+				F:      field,
+				Value:  rawURL,
+				Detail: "invalid port",
+			})
+		}
 	}
 	// Return no error to indicate success.
 	return nil
@@ -80,23 +125,32 @@ func statusAdvice(status int) string {
 	// Select guidance matching the status code.
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		// Return guidance for malformed or invalid request parameters.
 		return "check the configured model and provider settings"
 	case http.StatusUnauthorized:
+		// Return guidance for missing or invalid authentication credentials.
 		return "check that the API key is set correctly"
 	case http.StatusPaymentRequired:
+		// Return guidance when the provider account has insufficient funds.
 		return "insufficient credits; add credits to the provider account"
 	case http.StatusForbidden:
+		// Return guidance when the API key lacks access to the requested resource.
 		return "check the API key permissions for this model"
 	case http.StatusNotFound:
+		// Return guidance when the requested model or endpoint does not exist.
 		return "check the configured model name"
 	case http.StatusRequestEntityTooLarge:
+		// Return guidance when the request body exceeds the provider's size limit.
 		return "reduce the prompt or request payload size"
 	case http.StatusTooManyRequests:
+		// Return guidance when the caller has exceeded the provider's rate limit.
 		return "rate limited; retry later"
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout, statusEdgeTimeout:
+		// Return guidance when the request or upstream gateway timed out.
 		return "the provider timed out; retry later"
 	case http.StatusInternalServerError, http.StatusBadGateway,
 		http.StatusServiceUnavailable, statusProviderOverloaded:
+		// Return guidance when the provider experiences a transient server failure or overload.
 		return "the provider is temporarily unavailable; retry later"
 	}
 	// Return no guidance for other status codes.
