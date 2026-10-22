@@ -6,7 +6,7 @@ package tsaiclient_test
 
 // Import packages.
 import (
-	"fmt"     // Import the fmt package for formatting.
+	// Import the fmt package for formatting.
 	"strings" // Import the strings package for string operations.
 	"testing" // Import the testing package for subtests.
 
@@ -48,14 +48,13 @@ func TestNewRequest(t *testing.T) {
 			t.Parallel()
 			// Create a new request and check whether the error matches expectations.
 			_, err := tsaiclient.NewRequest(tt.prompt)
-			// Check whether the error matches expectations.
-			if (err != nil) != tt.wantErr {
-				// Fail the test if the error presence does not match wantErr.
-				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
-					Var:    "error",
-					Actual: fmt.Sprintf("%v", err),
-					Want:   fmt.Sprintf("wantErr=%v", tt.wantErr),
-				}))
+			// Check whether an expected error was missing.
+			if tt.wantErr && err == nil {
+				t.Fatal(tserr.NilFailed("NewRequest"))
+			}
+			// Check whether an unexpected error was returned.
+			if !tt.wantErr && err != nil {
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
 			}
 		})
 	}
@@ -107,14 +106,15 @@ func TestRequestValidate(t *testing.T) {
 			}
 			// Set the system prompt and session ID.
 			req.WithSystemPrompt(tt.systemPrompt).WithSessionID(tt.sessionID)
-			// Validate the request and check whether the error matches expectations.
-			if err := req.Validate(); (err != nil) != tt.wantErr {
-				// Fail the test if the error presence does not match wantErr.
-				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
-					Var:    "error",
-					Actual: fmt.Sprintf("%v", err),
-					Want:   fmt.Sprintf("wantErr=%v", tt.wantErr),
-				}))
+			// Validate the request.
+			err = req.Validate()
+			// Check whether an expected error was missing.
+			if tt.wantErr && err == nil {
+				t.Fatal(tserr.NilFailed("Validate"))
+			}
+			// Check whether an unexpected error was returned.
+			if !tt.wantErr && err != nil {
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Validate", Err: err}))
 			}
 		})
 	}
