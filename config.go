@@ -14,19 +14,18 @@ import (
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
 )
 
+// Configuration and response validation bounds.
 const (
-	minTemperature = 0.0 // The minimum allowed sampling temperature.
-	maxTemperature = 2.0 // The maximum allowed sampling temperature.
+	minTemperature   = 0.0         // The minimum allowed sampling temperature.
+	maxTemperature   = 2.0         // The maximum allowed sampling temperature.
+	maxResponseBytes = 1024 * 1024 // The maximum number of bytes to read from a response body (1 MiB).
 )
 
 // reasoningEffortList is a list of valid reasoning effort levels.
 var reasoningEffortList = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
 
-// maxResponseBytes is the maximum number of bytes to read from the response body.
-const maxResponseBytes = 1024 * 1024 // 1 MiB
-
 // Config carries the settings for an AI completion client.
-// The zero value is not usable.
+// The zero value is not usable; construct instances with NewConfig.
 type Config struct {
 	model               string  // The model identifier passed to the provider.
 	maxCompletionTokens int     // The default cap on generated tokens per call. Zero means no cap.
@@ -90,8 +89,8 @@ func (cfg *Config) WithReasoningEffort(effort string) *Config {
 	return cfg
 }
 
-// Validate validates the configuration. Returns an error if the configuration
-// is invalid, or nil if it is valid.
+// Validate returns an error if cfg is nil, has an empty model, a negative
+// token cap, an unsupported reasoning effort, or a temperature outside [0, 2].
 func (cfg *Config) Validate() error {
 	// Return an error if the configuration is nil.
 	if cfg == nil {
