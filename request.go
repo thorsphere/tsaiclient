@@ -18,7 +18,7 @@ const maxSessionIDLen = 256
 // Request represents a provider-agnostic completion request.
 // The zero value is not usable; construct instances with NewRequest.
 type Request struct {
-	systemPrompt string // Optional system instruction guiding the model's behavior. An empty string means no system prompt.
+	systemPrompt string // Optional system instruction guiding the model's behavior. An empty or whitespace-only string means no system prompt.
 	prompt       string // The user prompt to complete.
 	sessionID    string // Optional sticky routing key for prompt-cache affinity.
 }
@@ -55,6 +55,7 @@ func (req *Request) WithSystemPrompt(systemPrompt string) *Request {
 }
 
 // WithSessionID sets the session ID and returns req.
+// It does not validate; an invalid value fails later in Validate.
 func (req *Request) WithSessionID(sessionID string) *Request {
 	// Set the session ID when the request is non-nil.
 	if req != nil {
@@ -69,7 +70,7 @@ func (req *Request) WithSessionID(sessionID string) *Request {
 func (req *Request) NewSessionID() error {
 	// Return an error if the request is nil.
 	if req == nil {
-		return tserr.Empty("request")
+		return tserr.NilPtr()
 	}
 	// Assign a cryptographically random text identifier.
 	req.sessionID = rand.Text()
@@ -77,19 +78,29 @@ func (req *Request) NewSessionID() error {
 	return nil
 }
 
-// Validate returns an error if req is nil, has an empty prompt, or has a
-// session ID exceeding 256 bytes.
+// Validate returns an error if req is nil, has an empty or whitespace-only
+// prompt, or has a session ID that exceeds 256 bytes or contains non-printable
+// ASCII or whitespace characters.
 func (req *Request) Validate() error {
 	// Return an error if the request is nil.
 	if req == nil {
-		return tserr.Empty("request")
+		return tserr.NilPtr()
 	}
-	// Session ID must be less than or equal to 256 characters, otherwise return an error.
+	// Session ID must be less than or equal to 256 bytes, otherwise return an error.
 	if len(req.sessionID) > maxSessionIDLen {
 		return tserr.Lower(&tserr.LowerArgs{
 			Var:         "session ID length",
 			HigherBound: maxSessionIDLen,
-			Actual:      int64(len(req.sessionID))})
+			Actual:      int64(len(req.sessionID)),
+		})
+	}
+	// Return an error if a non-empty session ID contains non-printable ASCII or whitespace.
+	if req.sessionID != "" && !isValidSessionID(req.sessionID) {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      "session ID",
+			Value:  req.sessionID,
+			Detail: "expected printable ASCII characters without whitespace",
+		})
 	}
 	// If the prompt is empty, return an error.
 	if strings.TrimSpace(req.prompt) == "" {
@@ -97,4 +108,18 @@ func (req *Request) Validate() error {
 	}
 	// Return no error to indicate success.
 	return nil
+}
+
+// isValidSessionID reports whether s is non-empty and consists exclusively of
+// printable ASCII characters excluding whitespace (0x21 through 0x7E).
+func isValidSessionID(s string) bool {
+	// Inspect each byte in s.
+	for i := 0; i < len(s); i++ {
+		// Reject whitespace, control characters, and non-ASCII bytes.
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	// Return true when all characters are valid.
+	return len(s) > 0
 }

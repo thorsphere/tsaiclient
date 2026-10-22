@@ -6,7 +6,6 @@ package tsaiclient_test
 
 // Import packages.
 import (
-	// Import the fmt package for formatting.
 	"strings" // Import the strings package for string operations.
 	"testing" // Import the testing package for subtests.
 
@@ -89,6 +88,42 @@ func TestRequestValidate(t *testing.T) {
 			name:      "session ID exceeds max length (257)",
 			prompt:    "Hello",
 			sessionID: strings.Repeat("a", 257),
+			wantErr:   true,
+		},
+		{
+			name:      "valid request with empty session ID",
+			prompt:    "Hello",
+			sessionID: "",
+			wantErr:   false,
+		},
+		{
+			name:      "whitespace-only session ID",
+			prompt:    "Hello",
+			sessionID: "   ",
+			wantErr:   true,
+		},
+		{
+			name:      "session ID with control character",
+			prompt:    "Hello",
+			sessionID: "session-\n-123",
+			wantErr:   true,
+		},
+		{
+			name:      "valid request with ASCII boundary characters (0x21 and 0x7E)",
+			prompt:    "Hello",
+			sessionID: "!session_1.2-3~",
+			wantErr:   false,
+		},
+		{
+			name:      "session ID with DEL character (0x7F)",
+			prompt:    "Hello",
+			sessionID: "session-\x7f-123",
+			wantErr:   true,
+		},
+		{
+			name:      "session ID with non-ASCII UTF-8 character",
+			prompt:    "Hello",
+			sessionID: "session-café",
 			wantErr:   true,
 		},
 	}
