@@ -428,7 +428,7 @@ func (p *OpenRouter) Validate() error {
 	}
 	// Validate the HTTP-Referer URL when provided.
 	if p.referer != "" {
-		if err := validateEndpointURL(p.referer); err != nil {
+		if err := validateHTTPSURL("OpenRouter HTTP-Referer", p.referer); err != nil {
 			return err
 		}
 	}
