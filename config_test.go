@@ -8,6 +8,7 @@ package tsaiclient_test
 import (
 	"math"    // Import the math package for floating-point constants.
 	"testing" // Import the testing package for subtests.
+	"time"    // Import the time package for timeouts.
 
 	"github.com/thorsphere/tsaiclient" // Import the tsaiclient package for testing.
 	"github.com/thorsphere/tserr"      // Import the tserr package for error handling.
@@ -80,12 +81,13 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 	// Define test cases.
 	tests := []struct {
-		name                string  // The name of the test case.
-		model               string  // The model identifier under test.
-		maxCompletionTokens int     // The max completion tokens under test.
-		temperature         float64 // The sampling temperature under test.
-		reasoningEffort     string  // The reasoning effort under test.
-		wantErr             bool    // Whether an error is expected.
+		name                string        // The name of the test case.
+		model               string        // The model identifier under test.
+		maxCompletionTokens int           // The max completion tokens under test.
+		temperature         float64       // The sampling temperature under test.
+		reasoningEffort     string        // The reasoning effort under test.
+		timeout             time.Duration // The per-call timeout under test.
+		wantErr             bool          // Whether an error is expected.
 	}{
 		{
 			name:                "defaults only",
@@ -167,6 +169,33 @@ func TestConfigValidate(t *testing.T) {
 			reasoningEffort:     "   ",
 			wantErr:             false,
 		},
+		{
+			name:                "negative timeout",
+			model:               "open/for-5",
+			maxCompletionTokens: 100,
+			temperature:         1.0,
+			reasoningEffort:     "low",
+			timeout:             -1 * time.Second,
+			wantErr:             true,
+		},
+		{
+			name:                "zero timeout falls back to default",
+			model:               "open/for-5",
+			maxCompletionTokens: 100,
+			temperature:         1.0,
+			reasoningEffort:     "low",
+			timeout:             0,
+			wantErr:             false,
+		},
+		{
+			name:                "positive timeout",
+			model:               "open/for-5",
+			maxCompletionTokens: 100,
+			temperature:         1.0,
+			reasoningEffort:     "low",
+			timeout:             5 * time.Minute,
+			wantErr:             false,
+		},
 	}
 	// Iterate over test cases.
 	for _, tt := range tests {
@@ -184,7 +213,8 @@ func TestConfigValidate(t *testing.T) {
 			cfg.WithModel(tt.model).
 				WithMaxCompletionTokens(tt.maxCompletionTokens).
 				WithTemperature(tt.temperature).
-				WithReasoningEffort(tt.reasoningEffort)
+				WithReasoningEffort(tt.reasoningEffort).
+				WithTimeout(tt.timeout)
 			// Validate the configuration.
 			err = cfg.Validate()
 			// Check whether an expected error was missing.
@@ -200,20 +230,22 @@ func TestConfigValidate(t *testing.T) {
 }
 
 // TestConfigWithBuildersNil tests that WithModel, WithMaxCompletionTokens,
-// WithTemperature, and WithReasoningEffort safely handle a nil Config receiver.
+// WithTemperature, WithReasoningEffort, and WithTimeout safely handle a nil
+// Config receiver.
 func TestConfigWithBuildersNil(t *testing.T) {
-	// Run test in parallel.
-	t.Parallel()
-	// Declare a nil configuration.
-	var cfg *tsaiclient.Config
-	// Verify chained builder calls return nil without panicking.
-	if got := cfg.WithModel("open/for-5").
-		WithMaxCompletionTokens(100).
-		WithTemperature(0.5).
-		WithReasoningEffort("low"); got != nil {
-		// Fail the test if a non-nil configuration was returned.
-		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Config.With*"}))
-	}
+    // Run test in parallel.
+    t.Parallel()
+    // Declare a nil configuration.
+    var cfg *tsaiclient.Config
+    // Verify chained builder calls return nil without panicking.
+    if got := cfg.WithModel("open/for-5").
+        WithMaxCompletionTokens(100).
+        WithTemperature(0.5).
+        WithReasoningEffort("low").
+        WithTimeout(time.Minute); got != nil {
+        // Fail the test if a non-nil configuration was returned.
+        t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Config.With*"}))
+    }
 }
 
 // TestConfigValidateNil tests the validation logic of Config.Validate when the configuration is nil.
