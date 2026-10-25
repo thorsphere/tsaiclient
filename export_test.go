@@ -4,8 +4,8 @@
 
 package tsaiclient
 
-// OpenRouterAPIKeyEnv is the environment variable name for the OpenRouter API key.
-const OpenRouterAPIKeyEnv = openRouterAPIKeyEnv
+// Import packages.
+import "net/http" // Import the http package for HTTP requests.
 
 // Unexported functions exported for external tests.
 var (
@@ -23,4 +23,25 @@ func (req *Request) GetSessionID() string {
 	}
 	// Return an empty string when the request is nil.
 	return ""
+}
+
+// MaxResponseBytes is the maximum number of bytes read from a response body.
+const MaxResponseBytes = maxResponseBytes
+
+// SetHTTPDo replaces the HTTP execution seam and returns a restore function.
+func SetHTTPDo(fn func(*http.Request) (*http.Response, error)) func() {
+	// Save the previous HTTP execution function.
+	prev := httpDo
+	// Install the replacement HTTP execution function.
+	httpDo = fn
+	// Return a function that restores the previous HTTP execution function.
+	return func() {
+		httpDo = prev
+	}
+}
+
+// NewBareClient constructs a Client without validation for testing defensive guards.
+func NewBareClient(cfg *Config, provider Provider) *Client {
+	// Return a Client with the raw fields.
+	return &Client{cfg: cfg, provider: provider}
 }
