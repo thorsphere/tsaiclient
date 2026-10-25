@@ -7,8 +7,13 @@ package tsaiclient
 // OpenRouterAPIKeyEnv is the environment variable name for the OpenRouter API key.
 const OpenRouterAPIKeyEnv = openRouterAPIKeyEnv
 
-// ValidateHTTPSURL exports validateHTTPSURL for external tests.
-var ValidateHTTPSURL = validateHTTPSURL
+// Unexported functions exported for external tests.
+var (
+	ValidateHTTPSURL = validateHTTPSURL // Exports validateHTTPSURL for external tests.
+	StatusAdvice     = statusAdvice     // Exports statusAdvice for external tests.
+	StatusError      = statusError      // Exports statusError for external tests.
+	ValidHostname    = validHostname    // Exports validHostname for external tests.
+)
 
 // GetSessionID returns the session ID of the request.
 func (req *Request) GetSessionID() string {
