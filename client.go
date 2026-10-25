@@ -79,7 +79,7 @@ func (c *Client) Complete(ctx context.Context, req *Request) (Result, error) {
 	}
 	// Return an error if the request is nil.
 	if req == nil {
-		return Result{}, tserr.Empty("request")
+		return Result{}, tserr.NilPtr()
 	}
 	// Return an error if the request is invalid.
 	if err := req.Validate(); err != nil {
