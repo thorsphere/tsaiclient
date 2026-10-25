@@ -10,15 +10,17 @@ import (
 	"math"    // Import the math package for floating-point checks.
 	"slices"  // Import the slices package for slice membership checks.
 	"strings" // Import the strings package for string manipulation.
+	"time"    // Import the time package for timeouts.
 
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
 )
 
 // Configuration and response validation bounds.
 const (
-	minTemperature   = 0.0         // The minimum allowed sampling temperature.
-	maxTemperature   = 2.0         // The maximum allowed sampling temperature.
-	maxResponseBytes = 1024 * 1024 // The maximum number of bytes to read from a response body (1 MiB).
+	minTemperature   = 0.0              // The minimum allowed sampling temperature.
+	maxTemperature   = 2.0              // The maximum allowed sampling temperature.
+	maxResponseBytes = 1024 * 1024      // The maximum number of bytes to read from a response body (1 MiB).
+	defaultTimeout   = 60 * time.Second // The default per-call timeout applied when none is configured.
 )
 
 // reasoningEffortList is a list of valid reasoning effort levels.
@@ -27,10 +29,11 @@ var reasoningEffortList = []string{"none", "minimal", "low", "medium", "high", "
 // Config carries the settings for an AI completion client.
 // The zero value is not usable; construct instances with NewConfig.
 type Config struct {
-	model               string  // The model identifier passed to the provider.
-	maxCompletionTokens int     // The default cap on generated tokens per call. Zero means no cap.
-	temperature         float64 // The default sampling temperature.
-	reasoningEffort     string  // Optional reasoning effort level (e.g. "low", "medium", "high"). Empty means omitted so the model default applies.
+	model               string        // The model identifier passed to the provider.
+	maxCompletionTokens int           // The default cap on generated tokens per call. Zero means no cap.
+	temperature         float64       // The default sampling temperature.
+	reasoningEffort     string        // Optional reasoning effort level (e.g. "low", "medium", "high"). Empty means omitted so the model default applies.
+	timeout             time.Duration // The per-call deadline for one completion. Zero means defaultTimeout.
 }
 
 // NewConfig returns a new Config for model with default settings. It returns
@@ -89,8 +92,19 @@ func (cfg *Config) WithReasoningEffort(effort string) *Config {
 	return cfg
 }
 
+// WithTimeout sets the per-call completion deadline and returns cfg.
+func (cfg *Config) WithTimeout(timeout time.Duration) *Config {
+	// Set the timeout when cfg is non-nil.
+	if cfg != nil {
+		cfg.timeout = timeout
+	}
+	// Return the configuration.
+	return cfg
+}
+
 // Validate returns an error if cfg is nil, has an empty model, a negative
-// token cap, an unsupported reasoning effort, or a temperature outside [0, 2].
+// timeout, a negative token cap, an unsupported reasoning effort, or a
+// temperature outside [0, 2].
 func (cfg *Config) Validate() error {
 	// Return an error if the configuration is nil.
 	if cfg == nil {
@@ -99,6 +113,13 @@ func (cfg *Config) Validate() error {
 	// model must be non-empty, otherwise return an error.
 	if strings.TrimSpace(cfg.model) == "" {
 		return tserr.Empty("model")
+	}
+	// The timeout must be greater than or equal to 0, otherwise return an error.
+	if cfg.timeout < 0 {
+		return tserr.Higher(&tserr.HigherArgs{
+			Var:        "timeout",
+			LowerBound: 0,
+			Actual:     int64(cfg.timeout)})
 	}
 	// max completion tokens must be greater than or equal to 0, otherwise return an error.
 	if cfg.maxCompletionTokens < 0 {
