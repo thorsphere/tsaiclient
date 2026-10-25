@@ -306,13 +306,8 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	}
 	// Check for a top-level error returned inside a 200 OK body when upstream failed after headers were sent.
 	if res.Error != nil && res.Error.Message != "" {
-		// Use the embedded error code when present, falling back to HTTP 502.
-		code := res.Error.Code
-		if code == 0 {
-			code = http.StatusBadGateway
-		}
-		// Return the structured provider error.
-		return Result{}, openRouterProviderError(p.Name(), code, *res.Error)
+		// Return the structured provider error, falling back to HTTP 502 status advice.
+		return Result{}, openRouterProviderError(p.Name(), http.StatusBadGateway, *res.Error)
 	}
 	// Return an error if the response contains no completion choices.
 	if len(res.Choices) == 0 {
@@ -322,13 +317,8 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	choice := res.Choices[0]
 	// Check for a mid-generation error embedded inside the completion choice.
 	if choice.Error != nil && choice.Error.Message != "" {
-		// Use the choice error code when present, falling back to HTTP 502.
-		code := choice.Error.Code
-		if code == 0 {
-			code = http.StatusBadGateway
-		}
-		// Return the structured provider error.
-		return Result{}, openRouterProviderError(p.Name(), code, *choice.Error)
+		// Return the structured provider error, falling back to HTTP 502 status advice.
+		return Result{}, openRouterProviderError(p.Name(), http.StatusBadGateway, *choice.Error)
 	}
 	// Reject responses flagged as blocked or failed by finish_reason.
 	switch choice.FinishReason {
@@ -402,7 +392,14 @@ func openRouterProviderError(name string, status int, apiErr openRouterError) er
 	}
 	// Append actionable status advice when no specific remedy hint was already provided.
 	if apiErr.Metadata == nil || apiErr.Metadata.RemedyHint == "" {
-		if advice := statusAdvice(status); advice != "" {
+		// Prefer advice for the embedded error code.
+		advice := statusAdvice(apiErr.Code)
+		// Fall back to advice for the HTTP status code when the embedded code has none.
+		if advice == "" {
+			advice = statusAdvice(status)
+		}
+		// Append the advice when available.
+		if advice != "" {
 			detail += "; " + advice
 		}
 	}
