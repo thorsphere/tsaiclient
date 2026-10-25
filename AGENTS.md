@@ -110,7 +110,19 @@ differ, and rules for one MUST NOT be applied to the other. One `main` package p
   applied to all of them in the same commit — never one side alone.
 
 ### 6. Deliberate Design Decisions — do NOT "fix" these
-- 
+- **Hostname validation is strict but internal-friendly:** `validHostname`
+  accepts IP literals (with optional zone identifiers) and DNS names of
+  labels matching [A-Za-z0-9_-] with no leading or trailing hyphen, an
+  optional single trailing dot, and the DNS length limits. Underscores are
+  deliberate: internal proxy and container DNS names use them. The check is
+  a fail-fast guard against operator typos and injected URL settings, not a
+  security boundary. Do not tighten
+  it to RFC 1123 (rejects internal names) and do not loosen it to a
+  non-empty check (reopens the `https://::1/` and `%3A` port-smuggle bugs).
+  If a URL setting ever becomes user-supplied, add a host allowlist; do not
+  rely on this check for that threat. A zone identifier is accepted only directly after an IPv6 literal and only with a non-empty name; `fe80::1%`, `192.0.2.1%eth0`, and `%eth0::1` are
+  rejected. Do not loosen this: the zone suffix previously masked the address
+  from validation.
 
 ---
 
