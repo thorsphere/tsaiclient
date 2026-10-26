@@ -19,6 +19,7 @@ import (
 	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
 )
 
+// Set of OpenRouter-specific constants.
 const (
 	openRouterAPIKeyEnv                 = "OPENROUTER_API_KEY"                            // The environment variable name for the OpenRouter API key.
 	openRouterBaseURL                   = "https://openrouter.ai/api/v1/chat/completions" // The default OpenRouter base URL.
@@ -30,6 +31,7 @@ const (
 	openRouterAppVisibilityHeader       = "X-OpenRouter-App-Visibility"                   // The header controlling whether a new app is listed publicly.
 	openRouterAppVisibilityHidden       = "hidden"                                        // The visibility header value that excludes a new app from public rankings.
 	openRouterMaxCategoryLen            = 30                                              // The maximum length in bytes of a single OpenRouter category slug.
+	openRouterMaxCategories             = 2                                               // The maximum number of OpenRouter categories per request.
 	openRouterDataCollectionDeny        = "deny"                                          // openRouterDataCollectionDeny is the OpenRouter data collection policy valuethat forbids upstream providers from retaining or training on prompts.
 	openRouterFinishReasonLength        = "length"                                        // The provider finish reason indicating the generated message was truncated by the token limit.
 	openRouterFinishReasonContentFilter = "content_filter"                                // The provider finish reason indicating the response was blocked by the provider's content filter.
@@ -277,10 +279,11 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 }
 
 // ParseHTTPResponse parses the HTTP statusCode and response body from the
-// OpenRouter chat completions endpoint and returns a normalized Result. It
-// returns an error if p is nil, the status code or payload indicates an
-// upstream error, the response cannot be unmarshaled, or no usable completion
-// content was produced.
+// OpenRouter chat completions endpoint and returns a normalized Result for
+// the first completion choice. Later choices are ignored and cannot replace
+// an empty or failed first choice. It returns an error if p is nil, the
+// status code or payload indicates an upstream error, the response cannot be
+// unmarshaled, or no usable completion content was produced.
 func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, error) {
 	// Return an error if the provider is nil.
 	if p == nil {
@@ -290,12 +293,11 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		// Declare the error envelope to decode into.
 		var errRes openRouterErrorResponse
-		// Attempt to parse the structured OpenRouter error body.
-		if err := json.Unmarshal(body, &errRes); err == nil && errRes.Error.Message != "" {
-			// Return the provider error enriched with metadata and status advice.
-			return Result{}, openRouterProviderError(p.Name(), statusCode, errRes.Error)
+		// Use any structured error details when the body can be decoded.
+		if err := json.Unmarshal(body, &errRes); err == nil {
+			return Result{}, openRouterResponseError(p.Name(), statusCode, errRes.Error)
 		}
-		// Fall back to a status-code error when the body carries no error message.
+		// Fall back to the HTTP status when the body cannot be decoded.
 		return Result{}, statusError(p.Name(), statusCode)
 	}
 	// Unmarshal the 2xx response body.
@@ -305,9 +307,9 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 		return Result{}, tserr.Op(&tserr.OpArgs{Op: "unmarshal response", Fn: p.Name(), Err: err})
 	}
 	// Check for a top-level error returned inside a 200 OK body when upstream failed after headers were sent.
-	if res.Error != nil && res.Error.Message != "" {
-		// Return the structured provider error, falling back to HTTP 502 status advice.
-		return Result{}, openRouterProviderError(p.Name(), http.StatusBadGateway, *res.Error)
+	if res.Error != nil {
+		// Return the provider error or a status fallback, using HTTP 502 when no code is available.
+		return Result{}, openRouterResponseError(p.Name(), http.StatusBadGateway, *res.Error)
 	}
 	// Return an error if the response contains no completion choices.
 	if len(res.Choices) == 0 {
@@ -316,9 +318,9 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	// Select the first completion choice.
 	choice := res.Choices[0]
 	// Check for a mid-generation error embedded inside the completion choice.
-	if choice.Error != nil && choice.Error.Message != "" {
-		// Return the structured provider error, falling back to HTTP 502 status advice.
-		return Result{}, openRouterProviderError(p.Name(), http.StatusBadGateway, *choice.Error)
+	if choice.Error != nil {
+		// Return the provider error or a status fallback, using HTTP 502 when no code is available.
+		return Result{}, openRouterResponseError(p.Name(), http.StatusBadGateway, *choice.Error)
 	}
 	// Reject responses flagged as blocked or failed by finish_reason.
 	switch choice.FinishReason {
@@ -366,6 +368,22 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	}, nil
 }
 
+// openRouterResponseError returns a structured provider error when apiErr has
+// a nonblank message. Otherwise, it returns a status error using apiErr.Code
+// when available, or status when no embedded code was reported.
+func openRouterResponseError(name string, status int, apiErr openRouterError) error {
+	// Preserve the structured provider error when it carries a usable message.
+	if strings.TrimSpace(apiErr.Message) != "" {
+		return openRouterProviderError(name, status, apiErr)
+	}
+	// Use the embedded error code for blank or missing messages when available.
+	if apiErr.Code != 0 {
+		return statusError(name, apiErr.Code)
+	}
+	// Fall back to the HTTP status when no embedded code was reported.
+	return statusError(name, status)
+}
+
 // openRouterProviderError returns an error for an OpenRouter error payload,
 // combining the error code, message, structured metadata, and status advice.
 func openRouterProviderError(name string, status int, apiErr openRouterError) error {
@@ -373,9 +391,17 @@ func openRouterProviderError(name string, status int, apiErr openRouterError) er
 	detail := apiErr.Message
 	// Append metadata context when OpenRouter included structured metadata.
 	if m := apiErr.Metadata; m != nil {
-		// Include the canonical error type and upstream provider name when present.
+		// Include the canonical error type when present.
 		if m.ErrorType != "" {
 			detail += fmt.Sprintf(" (type: %s)", m.ErrorType)
+		}
+		// Include the upstream provider name when present.
+		if m.ProviderName != "" {
+			detail += fmt.Sprintf(" (provider: %s)", m.ProviderName)
+		}
+		// Include the upstream provider error code when present.
+		if m.ProviderCode != "" {
+			detail += fmt.Sprintf(" (provider code: %s)", m.ProviderCode)
 		}
 		// Include moderation reasons when input was flagged.
 		if len(m.Reasons) > 0 {
@@ -429,6 +455,14 @@ func (p *OpenRouter) Validate() error {
 			return err
 		}
 	}
+	// Return an error if more than two categories are configured.
+	if len(p.categories) > openRouterMaxCategories {
+		return tserr.Lower(&tserr.LowerArgs{
+			Var:         "OpenRouter category count",
+			HigherBound: openRouterMaxCategories,
+			Actual:      int64(len(p.categories)),
+		})
+	}
 	// Validate each category slug when categories are provided.
 	for _, cat := range p.categories {
 		// Return an error if a category entry is empty.
@@ -456,11 +490,11 @@ func (p *OpenRouter) Validate() error {
 	return nil
 }
 
-// isValidCategory reports whether s consists exclusively of lowercase ASCII
-// letters, digits, and interior hyphens.
+// isValidCategory reports whether s consists of non-empty groups of lowercase
+// ASCII letters and digits joined by single hyphens.
 func isValidCategory(s string) bool {
-	// Reject leading or trailing hyphens.
-	if strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") {
+	// Reject leading, trailing, or repeated hyphens.
+	if strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") || strings.Contains(s, "--") {
 		return false
 	}
 	// Inspect each byte in s.
@@ -473,6 +507,6 @@ func isValidCategory(s string) bool {
 		// Reject any other character.
 		return false
 	}
-	// Return true when all characters are valid.
+	// Return true when all characters are valid and s is non-empty.
 	return len(s) > 0
 }
