@@ -233,19 +233,19 @@ func TestConfigValidate(t *testing.T) {
 // WithTemperature, WithReasoningEffort, and WithTimeout safely handle a nil
 // Config receiver.
 func TestConfigWithBuildersNil(t *testing.T) {
-    // Run test in parallel.
-    t.Parallel()
-    // Declare a nil configuration.
-    var cfg *tsaiclient.Config
-    // Verify chained builder calls return nil without panicking.
-    if got := cfg.WithModel("open/for-5").
-        WithMaxCompletionTokens(100).
-        WithTemperature(0.5).
-        WithReasoningEffort("low").
-        WithTimeout(time.Minute); got != nil {
-        // Fail the test if a non-nil configuration was returned.
-        t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Config.With*"}))
-    }
+	// Run test in parallel.
+	t.Parallel()
+	// Declare a nil configuration.
+	var cfg *tsaiclient.Config
+	// Verify chained builder calls return nil without panicking.
+	if got := cfg.WithModel("open/for-5").
+		WithMaxCompletionTokens(100).
+		WithTemperature(0.5).
+		WithReasoningEffort("low").
+		WithTimeout(time.Minute); got != nil {
+		// Fail the test if a non-nil configuration was returned.
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Config.With*"}))
+	}
 }
 
 // TestConfigValidateNil tests the validation logic of Config.Validate when the configuration is nil.
