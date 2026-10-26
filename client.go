@@ -71,7 +71,10 @@ func NewClient(cfg *Config, provider Provider) (*Client, error) {
 
 // Complete sends req to the configured provider using ctx and returns the
 // normalized Result. It returns an error if the receiver, ctx, or req is nil
-// or invalid, or if the request fails or the response is unusable.
+// or invalid, or if the request fails or the response is unusable. Complete
+// attempts the call exactly once; retrying transient failures is the caller's
+// responsibility. The ctx deadline bounds the whole call; when it expires the in-flight
+// request is canceled and the error wrapping context.DeadlineExceeded is returned.
 func (c *Client) Complete(ctx context.Context, req *Request) (Result, error) {
 	// Return an error if the client is nil.
 	if c == nil {
