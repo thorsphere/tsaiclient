@@ -9,10 +9,17 @@ import "net/http" // Import the http package for HTTP requests.
 
 // Unexported functions exported for external tests.
 var (
-	ValidateHTTPSURL = validateHTTPSURL // Exports validateHTTPSURL for external tests.
-	StatusAdvice     = statusAdvice     // Exports statusAdvice for external tests.
-	StatusError      = statusError      // Exports statusError for external tests.
-	ValidHostname    = validHostname    // Exports validHostname for external tests.
+	ValidateHTTPSURL        = validateHTTPSURL        // Exports validateHTTPSURL for external tests.
+	StatusAdvice            = statusAdvice            // Exports statusAdvice for external tests.
+	StatusError             = statusError             // Exports statusError for external tests.
+	ValidHostname           = validHostname           // Exports validHostname for external tests.
+	IsValidCategory         = isValidCategory         // Exports isValidCategory for external tests.
+	OpenRouterProviderError = openRouterProviderError // Exports openRouterProviderError for external tests.
+)
+
+type (
+	OpenRouterErrorMetadata = openRouterErrorMetadata // Exports openRouterErrorMetadata for external tests.
+	OpenRouterError         = openRouterError         // Exports openRouterError for external tests.
 )
 
 // GetSessionID returns the session ID of the request.
