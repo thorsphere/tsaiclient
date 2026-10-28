@@ -2,6 +2,19 @@
 // All Rights Reserved. Use is governed by the Functional Source License v1.1
 // (FSL-1.1-ALv2) that can be found in the LICENSE file.
 
+// Package tsaiclient provides a lightweight, provider-agnostic client for
+// unified AI chat-completion integration. A Client combines a validated
+// Config-model, token cap, temperature, reasoning effort, and per-call
+// timeout, with a Provider that formats requests and normalizes responses,
+// and completes prompts through a single deadline-bounded Complete call.
+// Results are normalized into content, truncation status, and token
+// Usage accounting. All inputs are validated up front, response bodies are
+// capped, and errors carry actionable guidance without echoing
+// credentials. The built-in OpenRouter provider reads its API key from the
+// OPENROUTER_API_KEY environment variable and supports strict privacy mode
+// that restricts routing to Zero Data Retention endpoints and forbids
+// upstream data collection. Retry policy is deliberately left to the caller:
+// Complete attempts each call exactly once.
 package tsaiclient
 
 // Import packages.
