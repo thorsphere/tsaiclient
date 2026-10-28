@@ -32,7 +32,7 @@ const (
 	openRouterAppVisibilityHidden       = "hidden"                                        // The visibility header value that excludes a new app from public rankings.
 	openRouterMaxCategoryLen            = 30                                              // The maximum length in bytes of a single OpenRouter category slug.
 	openRouterMaxCategories             = 2                                               // The maximum number of OpenRouter categories per request.
-	openRouterDataCollectionDeny        = "deny"                                          // openRouterDataCollectionDeny is the OpenRouter data collection policy valuethat forbids upstream providers from retaining or training on prompts.
+	openRouterDataCollectionDeny        = "deny"                                          // The OpenRouter data collection policy value that forbids upstream providers from retaining or training on prompts.
 	openRouterFinishReasonLength        = "length"                                        // The provider finish reason indicating the generated message was truncated by the token limit.
 	openRouterFinishReasonContentFilter = "content_filter"                                // The provider finish reason indicating the response was blocked by the provider's content filter.
 	openRouterFinishReasonError         = "error"                                         // The provider finish reason indicating generation failed on the provider side.
@@ -190,28 +190,32 @@ func (p *OpenRouter) Name() string {
 
 // BuildHTTPRequest returns an authenticated HTTP POST request bound to ctx
 // for the OpenRouter chat completions endpoint using cfg and req. It returns
-// an error if p, cfg, or req is nil or invalid, or if marshaling the payload
+// an error if p, ctx, cfg, or req is nil or invalid, or if marshaling the payload
 // or constructing the HTTP request fails.
 func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Request) (*http.Request, error) {
 	// Return an error if the provider is nil.
 	if p == nil {
 		return nil, tserr.NilPtr()
 	}
-	// Return an error if the provider is invalid.
-	if err := p.Validate(); err != nil {
-		return nil, err
+	// Return an error if the context is nil.
+	if ctx == nil {
+		return nil, tserr.Empty("context")
 	}
 	// Return an error if the configuration is nil.
 	if cfg == nil {
 		return nil, tserr.Empty("config")
 	}
-	// Return an error if the configuration is invalid.
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	// Return an error if the request is nil.
 	if req == nil {
 		return nil, tserr.Empty("request")
+	}
+	// Return an error if the provider is invalid.
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	// Return an error if the configuration is invalid.
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 	// Return an error if the request is invalid.
 	if err := req.Validate(); err != nil {
@@ -225,7 +229,7 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 	}
 	// Append the user prompt message.
 	messages = append(messages, openRouterMessage{Role: "user", Content: req.prompt})
-	// Build payload
+	// Construct the OpenRouter request payload.
 	payload := openRouterRequestPayload{
 		Model:               cfg.model,
 		Messages:            messages,
@@ -241,22 +245,23 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 			ZDR:            true,
 		}
 	}
-	// Marshal payload
+	// Marshal the request payload to JSON.
 	body, err := json.Marshal(payload)
 	// Return the zero result and an error if marshalling payload fails.
 	if err != nil {
 		return nil, tserr.Op(&tserr.OpArgs{Op: "marshal payload", Fn: p.Name(), Err: err})
 	}
-	// Create request with body
+	// Construct the HTTP POST request with the JSON body and context.
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", openRouterBaseURL, bytes.NewBuffer(body))
 	// Return nil and an error if creating request fails.
 	if err != nil {
 		return nil, tserr.Op(&tserr.OpArgs{Op: "new http request", Fn: p.Name(), Err: err})
 	}
-	// Set headers
-	// Authorization header
-	httpReq.Header.Set(openRouterAuthHeader, openRouterAuthValue+os.Getenv(openRouterAPIKeyEnv))
-	// Content-Type header
+	// Retrieve the OpenRouter API key from the environment.
+	apiKey := strings.TrimSpace(os.Getenv(openRouterAPIKeyEnv))
+	// Set the Authorization header with the API key.
+	httpReq.Header.Set(openRouterAuthHeader, openRouterAuthValue+apiKey)
+	// Set the Content-Type header to JSON.
 	httpReq.Header.Set("Content-Type", "application/json")
 	// Set the HTTP-Referer header when provided by the calling app.
 	if p.referer != "" {
@@ -342,7 +347,7 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	// Extract the generated text content.
 	content := choice.Message.Content
 	// Return an error when no content was generated.
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		// Report when a reasoning model exhausted max_completion_tokens on reasoning before emitting content.
 		if choice.FinishReason == openRouterFinishReasonLength && res.Usage.Details.ReasoningTokens > 0 {
 			return Result{}, tserr.Op(&tserr.OpArgs{
@@ -434,16 +439,27 @@ func openRouterProviderError(name string, status int, apiErr openRouterError) er
 }
 
 // Validate validates the OpenRouter provider configuration and environment.
-// It returns an error if the API key is missing or if attribution settings
-// violate OpenRouter's header constraints.
+// It returns an error if the API key is missing or is not a legal HTTP header
+// field value, or if attribution settings violate OpenRouter's header
+// constraints or carry characters that would break the request headers.
 func (p *OpenRouter) Validate() error {
 	// Return an error if the provider is nil.
 	if p == nil {
 		return tserr.NilPtr()
 	}
+	// Retrieve the trimmed OpenRouter API key from the environment.
+	apiKey := strings.TrimSpace(os.Getenv(openRouterAPIKeyEnv))
 	// Return an error if the API key is not set.
-	if strings.TrimSpace(os.Getenv(openRouterAPIKeyEnv)) == "" {
+	if apiKey == "" {
 		return tserr.Empty("OpenRouter API key")
+	}
+	// Return an error if the API key is not a legal HTTP header field value.
+	if !isValidHeaderValue(apiKey) {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      "OpenRouter API key",
+			Value:  "<redacted>",
+			Detail: "expected printable ASCII characters and spaces",
+		})
 	}
 	// Require HTTP-Referer whenever secondary attribution headers are configured.
 	if p.referer == "" && (p.title != "" || len(p.categories) > 0 || p.hidden) {
@@ -454,6 +470,14 @@ func (p *OpenRouter) Validate() error {
 		if err := validateHTTPSURL("OpenRouter HTTP-Referer", p.referer); err != nil {
 			return err
 		}
+	}
+	// Return an error if the title is not a legal HTTP header field value.
+	if p.title != "" && !isValidHeaderValue(p.title) {
+		return tserr.InvalidFormat(&tserr.InvalidFormatArgs{
+			F:      "OpenRouter title",
+			Value:  "<redacted>",
+			Detail: "expected printable ASCII characters and spaces",
+		})
 	}
 	// Return an error if more than two categories are configured.
 	if len(p.categories) > openRouterMaxCategories {
@@ -488,6 +512,21 @@ func (p *OpenRouter) Validate() error {
 	}
 	// Return no error to indicate success.
 	return nil
+}
+
+// isValidHeaderValue reports whether s is non-empty and consists exclusively
+// of printable ASCII characters including spaces (0x20 through 0x7E), the safe
+// subset of HTTP header field values that carries no control characters.
+func isValidHeaderValue(s string) bool {
+	// Inspect each byte in s.
+	for i := 0; i < len(s); i++ {
+		// Reject control characters, DEL, and non-ASCII bytes.
+		if s[i] < ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	// Return true when all characters are valid and s is non-empty.
+	return len(s) > 0
 }
 
 // isValidCategory reports whether s consists of non-empty groups of lowercase
