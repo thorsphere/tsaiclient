@@ -6,12 +6,16 @@ package tsaiclient_test
 
 // Import packages.
 import (
-	"net/http"
-	"strings"
-	"testing" // Import the testing package for subtests.
+	"context"       // Import the context package for request contexts.
+	"encoding/json" // Import the encoding/json package for JSON handling.
+	"fmt"           // Import the fmt package for formatted I/O.
+	"io"            // Import the io package for I/O operations.
+	"net/http"      // Import the net/http package for HTTP requests and responses.
+	"strings"       // Import the strings package for string manipulation.
+	"testing"       // Import the testing package for subtests.
 
 	"github.com/thorsphere/tsaiclient" // Import the tsaiclient package for testing.
-	"github.com/thorsphere/tserr"
+	"github.com/thorsphere/tserr"      // Import the tserr package for error handling.
 )
 
 // TestIsValidCategory tests the category validation logic of isValidCategory.
@@ -51,7 +55,11 @@ func TestIsValidCategory(t *testing.T) {
 			got := tsaiclient.IsValidCategory(tt.category)
 			// Report a mismatch between actual and expected validity.
 			if got != tt.want {
-				t.Errorf("IsValidCategory(%q) = %t, want %t", tt.category, got, tt.want)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    fmt.Sprintf("IsValidCategory(%q)", tt.category),
+					Actual: fmt.Sprintf("%t", got),
+					Want:   fmt.Sprintf("%t", tt.want),
+				}))
 			}
 		})
 	}
@@ -65,17 +73,17 @@ func TestOpenRouterValidateCategories(t *testing.T) {
 	tests := []struct {
 		name       string   // The name of the test case.
 		categories []string // The categories under test.
-		wantErr    bool     // Whether validation is expected to fail.
+		wantErrSub string   // Substring expected in the error; empty means no error.
 	}{
 		{name: "no categories", categories: nil},
 		{name: "one category", categories: []string{"open-router"}},
 		{name: "two categories", categories: []string{"open-router", "developer-tools"}},
-		{name: "three categories", categories: []string{"one", "two", "three"}, wantErr: true},
+		{name: "three categories", categories: []string{"one", "two", "three"}, wantErrSub: "category count"},
 		{name: "category at 30-character limit", categories: []string{strings.Repeat("a", 30)}},
-		{name: "category over 30-character limit", categories: []string{strings.Repeat("a", 31)}, wantErr: true},
-		{name: "second category over limit", categories: []string{"valid", strings.Repeat("b", 31)}, wantErr: true},
-		{name: "repeated hyphen", categories: []string{"open--router"}, wantErr: true},
-		{name: "empty category entry", categories: []string{""}, wantErr: true},
+		{name: "category over 30-character limit", categories: []string{strings.Repeat("a", 31)}, wantErrSub: "category length"},
+		{name: "second category over limit", categories: []string{"valid", strings.Repeat("b", 31)}, wantErrSub: "category length"},
+		{name: "repeated hyphen", categories: []string{"open--router"}, wantErrSub: "expected lowercase letters, digits, and hyphens"},
+		{name: "empty category entry", categories: []string{""}, wantErrSub: "category"},
 	}
 	// Iterate over test cases.
 	for _, tt := range tests {
@@ -88,14 +96,22 @@ func TestOpenRouterValidateCategories(t *testing.T) {
 			// Validate the provider configuration.
 			err := provider.Validate()
 			// Check whether an expected error was missing.
-			if tt.wantErr && err == nil {
+			if tt.wantErrSub != "" && err == nil {
 				t.Fatal(tserr.NilFailed("OpenRouter.Validate"))
 			}
 			// Check whether an unexpected error was returned.
-			if !tt.wantErr && err != nil {
+			if tt.wantErrSub == "" && err != nil {
 				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{
 					Op:  "OpenRouter.Validate",
 					Err: err,
+				}))
+			}
+			// Check whether the error carries the expected detail.
+			if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.Validate error",
+					Actual: err.Error(),
+					Want:   tt.wantErrSub,
 				}))
 			}
 		})
@@ -242,6 +258,24 @@ func TestOpenRouterValidateAttribution(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "title with embedded newline",
+			setup: func() *tsaiclient.OpenRouter {
+				return tsaiclient.NewOpenRouter().
+					WithReferer("https://example.com").
+					WithTitle("My\nApp")
+			},
+			wantErr: true,
+		},
+		{
+			name: "title with non-ASCII characters",
+			setup: func() *tsaiclient.OpenRouter {
+				return tsaiclient.NewOpenRouter().
+					WithReferer("https://example.com").
+					WithTitle("Café")
+			},
+			wantErr: true,
+		},
 	}
 	// Iterate over test cases.
 	for _, tt := range tests {
@@ -266,7 +300,7 @@ func TestOpenRouterValidateAttribution(t *testing.T) {
 	}
 }
 
-// TestOpenRouterValidateAPIKey tests rejection of empty and whitespace-only API keys.
+// TestOpenRouterValidateAPIKey tests rejection of missing and malformed API keys.
 func TestOpenRouterValidateAPIKey(t *testing.T) {
 	// Define test cases.
 	tests := []struct {
@@ -275,6 +309,10 @@ func TestOpenRouterValidateAPIKey(t *testing.T) {
 	}{
 		{name: "empty API key", apiKey: ""},
 		{name: "whitespace-only API key", apiKey: " \t\n"},
+		{name: "embedded newline", apiKey: "bad\nkey"},
+		{name: "embedded carriage return", apiKey: "bad\rkey"},
+		{name: "embedded tab", apiKey: "bad\tkey"},
+		{name: "non-ASCII characters", apiKey: "café"},
 	}
 	// Iterate over test cases.
 	for _, tt := range tests {
@@ -415,14 +453,21 @@ func TestOpenRouterProviderError(t *testing.T) {
 			for _, want := range tt.wantSub {
 				// Fail if a required substring is missing.
 				if !strings.Contains(err.Error(), want) {
-					t.Errorf("OpenRouterProviderError() error = %q, want substring %q", err, want)
+					t.Error(tserr.EqualStr(&tserr.EqualStrArgs{
+						Var:    "OpenRouterProviderError error",
+						Actual: err.Error(),
+						Want:   want,
+					}))
 				}
 			}
 			// Check for every forbidden error substring.
 			for _, notWant := range tt.notWantSub {
 				// Fail if a forbidden substring is present.
 				if strings.Contains(err.Error(), notWant) {
-					t.Errorf("OpenRouterProviderError() error = %q, must not contain %q", err, notWant)
+					t.Error(tserr.NotEqual(&tserr.NotEqualArgs{
+						X: "OpenRouterProviderError error",
+						Y: notWant,
+					}))
 				}
 			}
 		})
@@ -521,11 +566,19 @@ func TestOpenRouterParseHTTPResponseErrorFallback(t *testing.T) {
 			}
 			// Fail if the expected error detail is missing.
 			if !strings.Contains(err.Error(), tt.wantSub) {
-				t.Errorf("ParseHTTPResponse() error = %q, want substring %q", err, tt.wantSub)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse error",
+					Actual: err.Error(),
+					Want:   tt.wantSub,
+				}))
 			}
 			// Fail if an error path returned completion data.
 			if result != (tsaiclient.Result{}) {
-				t.Errorf("ParseHTTPResponse() result = %+v, want zero result", result)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse result",
+					Actual: fmt.Sprintf("%+v", result),
+					Want:   fmt.Sprintf("%+v", tsaiclient.Result{}),
+				}))
 			}
 		})
 	}
@@ -611,7 +664,11 @@ func TestOpenRouterParseHTTPResponseFirstChoicePolicy(t *testing.T) {
 				}
 				// Fail if the expected error detail is missing.
 				if !strings.Contains(err.Error(), tt.wantErrSub) {
-					t.Errorf("ParseHTTPResponse() error = %q, want substring %q", err, tt.wantErrSub)
+					t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+						Var:    "OpenRouter.ParseHTTPResponse error",
+						Actual: err.Error(),
+						Want:   tt.wantErrSub,
+					}))
 				}
 				// Stop after checking the expected error.
 				return
@@ -625,7 +682,11 @@ func TestOpenRouterParseHTTPResponseFirstChoicePolicy(t *testing.T) {
 			}
 			// Fail if the first choice was not selected.
 			if result.Content != tt.wantContent {
-				t.Errorf("ParseHTTPResponse() content = %q, want %q", result.Content, tt.wantContent)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse content",
+					Actual: result.Content,
+					Want:   tt.wantContent,
+				}))
 			}
 		})
 	}
@@ -645,7 +706,11 @@ func TestOpenRouterParseHTTPResponseNilReceiver(t *testing.T) {
 	}
 	// Fail if a nil-receiver error returned completion data.
 	if result != (tsaiclient.Result{}) {
-		t.Errorf("ParseHTTPResponse() result = %+v, want zero result", result)
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.ParseHTTPResponse result",
+			Actual: fmt.Sprintf("%+v", result),
+			Want:   fmt.Sprintf("%+v", tsaiclient.Result{}),
+		}))
 	}
 }
 
@@ -728,7 +793,11 @@ func TestOpenRouterParseHTTPResponseSuccess(t *testing.T) {
 			}
 			// Compare the complete normalized result.
 			if got != tt.want {
-				t.Errorf("ParseHTTPResponse() result = %+v, want %+v", got, tt.want)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse result",
+					Actual: fmt.Sprintf("%+v", got),
+					Want:   fmt.Sprintf("%+v", tt.want),
+				}))
 			}
 		})
 	}
@@ -858,11 +927,487 @@ func TestOpenRouterParseHTTPResponseErrors(t *testing.T) {
 			}
 			// Fail if the expected error detail is missing.
 			if !strings.Contains(err.Error(), tt.wantSub) {
-				t.Errorf("ParseHTTPResponse() error = %q, want substring %q", err, tt.wantSub)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse error",
+					Actual: err.Error(),
+					Want:   tt.wantSub,
+				}))
 			}
 			// Fail if an error path returned completion data.
 			if result != (tsaiclient.Result{}) {
-				t.Errorf("ParseHTTPResponse() result = %+v, want zero result", result)
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.ParseHTTPResponse result",
+					Actual: fmt.Sprintf("%+v", result),
+					Want:   fmt.Sprintf("%+v", tsaiclient.Result{}),
+				}))
+			}
+		})
+	}
+}
+
+// TestOpenRouterBuildHTTPRequestValidation tests defensive request-builder guards.
+func TestOpenRouterBuildHTTPRequestValidation(t *testing.T) {
+	// Install a valid API key for cases that reach payload construction.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	// Construct a valid configuration.
+	validCfg, err := tsaiclient.NewConfig("openai/gpt-5")
+	// Fail if constructing the valid configuration fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
+	}
+	// Construct a valid request.
+	validReq, err := tsaiclient.NewRequest("Hello")
+	// Fail if constructing the valid request fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
+	}
+	// Define test cases.
+	tests := []struct {
+		name     string                 // The name of the test case.
+		provider *tsaiclient.OpenRouter // The provider under test.
+		ctx      context.Context        // The request context under test.
+		cfg      *tsaiclient.Config     // The configuration under test.
+		req      *tsaiclient.Request    // The request under test.
+	}{
+		{
+			name: "nil provider",
+			ctx:  context.Background(),
+			cfg:  validCfg,
+			req:  validReq,
+		},
+		{
+			name:     "nil context",
+			provider: tsaiclient.NewOpenRouter(),
+			cfg:      validCfg,
+			req:      validReq,
+		},
+		{
+			name:     "invalid provider",
+			provider: tsaiclient.NewOpenRouter().WithTitle("missing referer"),
+			ctx:      context.Background(),
+			cfg:      validCfg,
+			req:      validReq,
+		},
+		{
+			name:     "nil config",
+			provider: tsaiclient.NewOpenRouter(),
+			ctx:      context.Background(),
+			req:      validReq,
+		},
+		{
+			name:     "invalid config",
+			provider: tsaiclient.NewOpenRouter(),
+			ctx:      context.Background(),
+			cfg:      &tsaiclient.Config{},
+			req:      validReq,
+		},
+		{
+			name:     "nil request",
+			provider: tsaiclient.NewOpenRouter(),
+			ctx:      context.Background(),
+			cfg:      validCfg,
+		},
+		{
+			name:     "invalid request",
+			provider: tsaiclient.NewOpenRouter(),
+			ctx:      context.Background(),
+			cfg:      validCfg,
+			req:      &tsaiclient.Request{},
+		},
+	}
+	// Iterate over test cases.
+	for _, tt := range tests {
+		// Run each test case as a subtest.
+		t.Run(tt.name, func(t *testing.T) {
+			// Attempt to build the HTTP request.
+			httpReq, err := tt.provider.BuildHTTPRequest(tt.ctx, tt.cfg, tt.req)
+			// Fail if no error was returned.
+			if err == nil {
+				t.Fatal(tserr.NilFailed("OpenRouter.BuildHTTPRequest"))
+			}
+			// Fail if an HTTP request was returned with the error.
+			if httpReq != nil {
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.BuildHTTPRequest request",
+					Actual: fmt.Sprintf("%+v", httpReq),
+					Want:   fmt.Sprintf("%+v", (*http.Request)(nil)),
+				}))
+			}
+		})
+	}
+}
+
+// TestOpenRouterBuildHTTPRequest tests full OpenRouter request construction.
+func TestOpenRouterBuildHTTPRequest(t *testing.T) {
+	// Install the API key expected in the authorization header.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	// Define a context key type for context propagation.
+	type contextKey string
+	// Create a context carrying a test value.
+	ctx := context.WithValue(context.Background(), contextKey("request-id"), "request-123")
+	// Configure all supported request-generation fields.
+	cfg, err := tsaiclient.NewConfig("openai/gpt-5")
+	// Fail if configuration construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
+	}
+	// Apply generation options.
+	cfg.WithMaxCompletionTokens(128).
+		WithTemperature(0.7).
+		WithReasoningEffort("high")
+	// Configure system instructions and a stable session ID.
+	req, err := tsaiclient.NewRequest("User prompt")
+	// Fail if request construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
+	}
+	// Preserve surrounding whitespace in the nonblank system prompt.
+	req.WithSystemPrompt("  System prompt  ").WithSessionID("session-123")
+	// Configure all attribution fields.
+	provider := tsaiclient.NewOpenRouter().
+		WithReferer("https://example.com/app").
+		WithTitle("Example App").
+		WithCategories([]string{"developer-tools", "productivity"}).
+		WithHidden(true)
+	// Enable strict privacy routing.
+	if err := provider.EnablePrivacy(); err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "EnablePrivacy", Err: err}))
+	}
+	// Build the OpenRouter HTTP request.
+	httpReq, err := provider.BuildHTTPRequest(ctx, cfg, req)
+	// Fail if request construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "OpenRouter.BuildHTTPRequest", Err: err}))
+	}
+	// Verify the HTTP method.
+	if httpReq.Method != http.MethodPost {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest method",
+			Actual: httpReq.Method,
+			Want:   http.MethodPost,
+		}))
+	}
+	// Verify the fixed OpenRouter endpoint.
+	if got, want := httpReq.URL.String(), "https://openrouter.ai/api/v1/chat/completions"; got != want {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest URL",
+			Actual: got,
+			Want:   want,
+		}))
+	}
+	// Record the propagated context value as text.
+	gotCtx := fmt.Sprintf("%v", httpReq.Context().Value(contextKey("request-id")))
+	// Verify that the original context was propagated.
+	if gotCtx != "request-123" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest context value",
+			Actual: gotCtx,
+			Want:   "request-123",
+		}))
+	}
+	// Define expected headers.
+	wantHeaders := map[string]string{
+		"Authorization":               "Bearer test-key",
+		"Content-Type":                "application/json",
+		"HTTP-Referer":                "https://example.com/app",
+		"X-OpenRouter-Title":          "Example App",
+		"X-OpenRouter-Categories":     "developer-tools,productivity",
+		"X-OpenRouter-App-Visibility": "hidden",
+	}
+	// Check every expected header.
+	for key, want := range wantHeaders {
+		// Fail if the header value differs.
+		if got := httpReq.Header.Get(key); got != want {
+			t.Error(tserr.EqualStr(&tserr.EqualStrArgs{
+				Var:    fmt.Sprintf("OpenRouter.BuildHTTPRequest header %q", key),
+				Actual: got,
+				Want:   want,
+			}))
+		}
+	}
+	// Read the serialized request body.
+	body, err := io.ReadAll(httpReq.Body)
+	// Fail if reading the body fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "read request body", Err: err}))
+	}
+	// Decode the payload into a typed test representation.
+	var payload struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		MaxCompletionTokens int     `json:"max_completion_tokens"`
+		Temperature         float64 `json:"temperature"`
+		ReasoningEffort     string  `json:"reasoning_effort"`
+		SessionID           string  `json:"session_id"`
+		Provider            struct {
+			DataCollection string `json:"data_collection"`
+			ZDR            bool   `json:"zdr"`
+		} `json:"provider"`
+	}
+	// Fail if decoding the request payload fails.
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode request payload", Err: err}))
+	}
+	// Verify the model payload field.
+	if payload.Model != "openai/gpt-5" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest payload model",
+			Actual: payload.Model,
+			Want:   "openai/gpt-5",
+		}))
+	}
+	// Verify the token cap payload field.
+	if payload.MaxCompletionTokens != 128 {
+		t.Fatal(tserr.EqualInt(&tserr.EqualIntArgs{
+			Var:    "OpenRouter.BuildHTTPRequest payload max_completion_tokens",
+			Actual: int64(payload.MaxCompletionTokens),
+			Want:   128,
+		}))
+	}
+	// Verify the temperature payload field.
+	if payload.Temperature != 0.7 {
+		t.Fatal(tserr.Equalf(&tserr.EqualfArgs{
+			Var:    "OpenRouter.BuildHTTPRequest payload temperature",
+			Actual: payload.Temperature,
+			Want:   0.7,
+		}))
+	}
+	// Verify the reasoning effort payload field.
+	if payload.ReasoningEffort != "high" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest payload reasoning_effort",
+			Actual: payload.ReasoningEffort,
+			Want:   "high",
+		}))
+	}
+	// Verify the session ID payload field.
+	if payload.SessionID != "session-123" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest payload session_id",
+			Actual: payload.SessionID,
+			Want:   "session-123",
+		}))
+	}
+	// Verify the number and ordering of conversation messages.
+	if len(payload.Messages) != 2 {
+		t.Fatal(tserr.EqualInt(&tserr.EqualIntArgs{
+			Var:    "OpenRouter.BuildHTTPRequest message count",
+			Actual: int64(len(payload.Messages)),
+			Want:   2,
+		}))
+	}
+	// Verify the system message role.
+	if payload.Messages[0].Role != "system" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest system message role",
+			Actual: payload.Messages[0].Role,
+			Want:   "system",
+		}))
+	}
+	// Verify the system message content.
+	if payload.Messages[0].Content != "  System prompt  " {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest system message content",
+			Actual: payload.Messages[0].Content,
+			Want:   "  System prompt  ",
+		}))
+	}
+	// Verify the user message role.
+	if payload.Messages[1].Role != "user" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest user message role",
+			Actual: payload.Messages[1].Role,
+			Want:   "user",
+		}))
+	}
+	// Verify the user message content.
+	if payload.Messages[1].Content != "User prompt" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest user message content",
+			Actual: payload.Messages[1].Content,
+			Want:   "User prompt",
+		}))
+	}
+	// Verify the data collection privacy preference.
+	if payload.Provider.DataCollection != "deny" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest provider data_collection",
+			Actual: payload.Provider.DataCollection,
+			Want:   "deny",
+		}))
+	}
+	// Verify the zero data retention privacy preference.
+	if !payload.Provider.ZDR {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest provider zdr",
+			Actual: fmt.Sprintf("%t", payload.Provider.ZDR),
+			Want:   "true",
+		}))
+	}
+}
+
+// TestOpenRouterBuildHTTPRequestDefaults tests omitted optional fields and headers.
+func TestOpenRouterBuildHTTPRequestDefaults(t *testing.T) {
+	// Install a valid API key.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	// Construct the default configuration.
+	cfg, err := tsaiclient.NewConfig("openai/gpt-5")
+	// Fail if configuration construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
+	}
+	// Construct a request without a system prompt.
+	req, err := tsaiclient.NewRequest("Hello")
+	// Fail if request construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
+	}
+	// Replace the generated session ID and mark the system prompt blank-only.
+	req.WithSystemPrompt(" \t\n").WithSessionID("")
+	// Build a request with the zero-value provider configuration.
+	httpReq, err := tsaiclient.NewOpenRouter().BuildHTTPRequest(context.Background(), cfg, req)
+	// Fail if request construction fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "OpenRouter.BuildHTTPRequest", Err: err}))
+	}
+	// Read the request body.
+	body, err := io.ReadAll(httpReq.Body)
+	// Fail if reading the body fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "read request body", Err: err}))
+	}
+	// Decode the payload generically to check key omission.
+	var payload map[string]any
+	// Fail if decoding fails.
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode request payload", Err: err}))
+	}
+	// Check that zero-value optional fields are omitted.
+	for _, key := range []string{
+		"max_completion_tokens",
+		"temperature",
+		"reasoning_effort",
+		"session_id",
+		"provider",
+	} {
+		// Fail if an omitted field is present.
+		if _, present := payload[key]; present {
+			t.Error(tserr.NotEqual(&tserr.NotEqualArgs{
+				X: fmt.Sprintf("OpenRouter.BuildHTTPRequest payload key %q", key),
+				Y: "present",
+			}))
+		}
+	}
+	// Decode the messages separately.
+	var messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	// Re-marshal only the message value for typed decoding.
+	messageJSON, err := json.Marshal(payload["messages"])
+	// Fail if preparing the messages fails.
+	if err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "encode messages", Err: err}))
+	}
+	// Fail if decoding the messages fails.
+	if err := json.Unmarshal(messageJSON, &messages); err != nil {
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode messages", Err: err}))
+	}
+	// Verify that only the user message is present.
+	if len(messages) != 1 {
+		t.Fatal(tserr.EqualInt(&tserr.EqualIntArgs{
+			Var:    "OpenRouter.BuildHTTPRequest message count",
+			Actual: int64(len(messages)),
+			Want:   1,
+		}))
+	}
+	// Verify the user message role.
+	if messages[0].Role != "user" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest user message role",
+			Actual: messages[0].Role,
+			Want:   "user",
+		}))
+	}
+	// Verify the user message content.
+	if messages[0].Content != "Hello" {
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+			Var:    "OpenRouter.BuildHTTPRequest user message content",
+			Actual: messages[0].Content,
+			Want:   "Hello",
+		}))
+	}
+	// Verify that no attribution headers are emitted.
+	for _, key := range []string{
+		"HTTP-Referer",
+		"X-OpenRouter-Title",
+		"X-OpenRouter-Categories",
+		"X-OpenRouter-App-Visibility",
+	} {
+		// Fail if an attribution header is present.
+		if _, present := httpReq.Header[http.CanonicalHeaderKey(key)]; present {
+			t.Error(tserr.NotEqual(&tserr.NotEqualArgs{
+				X: fmt.Sprintf("OpenRouter.BuildHTTPRequest header %q", key),
+				Y: "present",
+			}))
+		}
+	}
+}
+
+// TestEnablePrivacyNil tests that enabling privacy on a nil provider returns an error.
+func TestEnablePrivacyNil(t *testing.T) {
+	// Run the test in parallel.
+	t.Parallel()
+	// Declare a typed-nil provider receiver.
+	var provider *tsaiclient.OpenRouter
+	// Attempt to enable privacy on the nil receiver.
+	err := provider.EnablePrivacy()
+	// Fail if no error was returned.
+	if err == nil {
+		t.Fatal(tserr.NilFailed("OpenRouter.EnablePrivacy"))
+	}
+}
+
+// TestIsValidHeaderValue tests the HTTP header field value constraints of isValidHeaderValue.
+func TestIsValidHeaderValue(t *testing.T) {
+	// Run subtests in parallel.
+	t.Parallel()
+	// Define test cases.
+	tests := []struct {
+		name  string // The name of the test case.
+		value string // The header field value under test.
+		want  bool   // Whether the value is expected to be valid.
+	}{
+		{name: "text with spaces", value: "Example App", want: true},
+		{name: "printable symbols", value: "sk-or-v1-abc_123-XYZ", want: true},
+		{name: "single space", value: " ", want: true},
+		{name: "empty value", value: "", want: false},
+		{name: "embedded newline", value: "My\nApp", want: false},
+		{name: "embedded carriage return", value: "My\rApp", want: false},
+		{name: "embedded tab", value: "My\tApp", want: false},
+		{name: "NUL byte", value: "My\x00App", want: false},
+		{name: "DEL byte", value: "My\x7fApp", want: false},
+		{name: "non-ASCII letters", value: "Café", want: false},
+		{name: "invalid UTF-8", value: "My\xffApp", want: false},
+	}
+	// Iterate over test cases.
+	for _, tt := range tests {
+		// Run each test case as a subtest.
+		t.Run(tt.name, func(t *testing.T) {
+			// Run the subtest in parallel.
+			t.Parallel()
+			// Validate the header field value under test.
+			got := tsaiclient.IsValidHeaderValue(tt.value)
+			// Report a mismatch between actual and expected validity.
+			if got != tt.want {
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    fmt.Sprintf("IsValidHeaderValue(%q)", tt.value),
+					Actual: fmt.Sprintf("%t", got),
+					Want:   fmt.Sprintf("%t", tt.want),
+				}))
 			}
 		})
 	}
