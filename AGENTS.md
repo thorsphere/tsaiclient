@@ -44,7 +44,7 @@ differ, and rules for one MUST NOT be applied to the other. One `main` package p
 - Must stay component-agnostic: no HTTP server wiring, no `main` imports.
 
 ### 2. Quality & Hardening Standards
-- **Testing:** Every new feature or package function requires table-driven Unit Tests. Target >85% coverage.
+- **Testing:** Every new feature or package function requires table-driven Unit Tests. Target >85% coverage. Error-presence assertions use tserr.NilFailed/NilExpected/Empty; value mismatches use tserr.EqualStr for strings and plain t.Errorf for composite values.
 - **Error Handling:** Explicit, idiomatic Go error handling. Do not panic. Wrap errors contextually where appropriate. Use the `tserr` package for error handling.
 - **Code Formatting:** Use `gofmt` to format Go code.
 - **Logging:** Service components: structured JSON logging to stdout (GCP Cloud Logging compatible) via tslog. CLI: human-readable output; tslog for diagnostics.
