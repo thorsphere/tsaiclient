@@ -15,6 +15,7 @@ var (
 	ValidHostname           = validHostname           // Exports validHostname for external tests.
 	IsValidCategory         = isValidCategory         // Exports isValidCategory for external tests.
 	OpenRouterProviderError = openRouterProviderError // Exports openRouterProviderError for external tests.
+	IsValidHeaderValue      = isValidHeaderValue      // Exports isValidHeaderValue for external tests.
 )
 
 type (
