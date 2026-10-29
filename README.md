@@ -11,8 +11,8 @@
 
 Go package for unified AI provider integration. Lightweight client to easily abstract and connect services to AI providers.
 
-`tsaiclient` gives you a single, provider-agnostic chat-completion call —
-configure a model, pick a provider, and get back a normalized result with
+`tsaiclient` gives you a single, provider-agnostic chat-completion call.
+Configure a model, pick a provider, and get back a normalized result with
 token usage and cost accounting. All inputs are validated up front, every
 call is deadline-bounded, and responses are size-capped, so the package is
 safe to expose to untrusted input.
