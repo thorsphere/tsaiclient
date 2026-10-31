@@ -101,13 +101,14 @@ differ, and rules for one MUST NOT be applied to the other. One `main` package p
 
 ### 5. Commit Messages
 - Commits in this repository follow strict Conventional Commits:
-  `<type>(<scope>)[!]: <imperative description>` with a header ≤72 bytes,
-  a body wrapped at 72 explaining WHAT and WHY, and a
+  `<type>(<scope>)[!]: <imperative description>` with a header ≤72 characters,
+  a body wrapped at 72 characters explaining WHAT and WHY, and a
   `BREAKING CHANGE:` footer when consumers must adapt.
 - **Scope is mandatory:** Every commit header MUST include a parenthesized
   scope — never omit `(<scope>)`.
 - When a format or contract is defined in multiple coupled places, a change MUST be
-  applied to all of them in the same commit — never one side alone.
+  applied to all of them in the same commit, never one side alone.
+- Description at least 3 characters.
 
 ### 6. Deliberate Design Decisions — do NOT "fix" these
 - **Hostname validation is strict but internal-friendly:** `validHostname`
