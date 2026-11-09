@@ -32,6 +32,9 @@ safe to expose to untrusted input.
   (`data_collection: deny`, `zdr: true`).
 - **Normalized results**: `Result` reports raw content, truncation status,
   and `Usage` with prompt/completion/reasoning/total tokens.
+- **Structured envelopes**: `CompleteJSON` decodes the model reply into the
+  standard `Envelope` of `findings` and `confidence`, with prompt guidance
+  for enforcing the contract (see below).
 - **Hardened by default**: per-call deadlines, response
   cap, strict HTTPS URL and hostname validation, and error values that redact
   credentials, query strings, and fragments.
@@ -154,6 +157,62 @@ affinity (session IDs are ≤ 256 bytes of printable non-whitespace ASCII).
   (`finish_reason == "length"`).
 - `Usage` — `PromptTokens`, `CompletionTokens`, `ReasoningTokens`,
   `TotalTokens`, and `Cost` (USD; `0` when the provider reports none).
+
+### Structured completions — `CompleteJSON` and `Envelope`
+
+`CompleteJSON` completes the request like `Complete` and decodes the reply
+into the standard structured `Envelope`:
+
+- `Findings` — the deliverables produced for the prompt (array of strings).
+- `Confidence` — the model's self-reported confidence (number). The scale is
+  defined by your prompt contract; the library does not interpret it.
+
+The returned `JSONResult` carries the `Envelope` alongside `Truncated` and
+`Usage`, so token accounting is available in both the success and the error
+case. A wrapping markdown code fence (` ```json ... ``` `) is stripped
+before decoding; semantic validation is deliberately left to the caller.
+
+#### Crafting the prompt
+
+The library cannot enforce the JSON shape at generation time, so **the prompt
+is the enforcement mechanism**. State the contract explicitly and include a
+literal example — models follow examples far more reliably than prose
+descriptions. A template:
+
+```text
+You are a code reviewer analyzing a git diff.
+
+<...task instructions...>
+
+Respond with ONLY a single JSON object, no prose before or after it, in
+exactly this shape:
+
+{"findings": ["finding text"], "confidence": 0.9}
+
+- "findings": an array of strings, one per finding, ordered most important
+  first. Return an empty array when there is nothing to report.
+- "confidence": a number from 0.0 to 1.0 expressing how confident you are
+  in the findings overall.
+```
+
+Rules of thumb that make the contract stick:
+
+- **Say "ONLY a single JSON object"** — the strongest single lever against
+  prose-wrapped or fence-wrapped replies (though fences are tolerated).
+- **Show one literal example** of the exact output shape, including a
+  realistic `confidence` value on your chosen scale.
+- **Define the confidence scale** (`0.0`–`1.0`, `1`–`10`, a percentage…)
+  and what it means; the library does not constrain it, so your prompt and
+  your consumer code must agree.
+- **Define the empty case.** If "no findings" is a valid outcome, say so and
+  specify `{"findings": [], "confidence": ...}` — otherwise the model may
+  apologize in prose instead of returning an envelope.
+- **Keep the contract in the system prompt or at the end of the user
+  prompt** — models attend to the most recent instructions.
+- On decode failure, the error is safe to feed back in a retry loop
+  ("your last reply was not valid JSON; respond again with only the JSON
+  object"). Check `Truncated` first: a truncated reply needs a larger
+  `MaxCompletionTokens`, not a retry with identical settings.
 
 ### Providers — `Provider` interface
 
