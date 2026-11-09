@@ -8,7 +8,11 @@
 // timeout, with a Provider that formats requests and normalizes responses,
 // and completes prompts through a single deadline-bounded Complete call.
 // Results are normalized into content, truncation status, and token
-// Usage accounting. All inputs are validated up front, response bodies are
+// Usage accounting, and CompleteJSON decodes the content further into the
+// standard structured Envelope of findings and confidence. All inputs are
+// validated up front, response bodies are capped, and errors carry
+// actionable guidance without echoing credentials.
+// All inputs are validated up front, response bodies are
 // capped, and errors carry actionable guidance without echoing
 // credentials. The built-in OpenRouter provider reads its API key from the
 // OPENROUTER_API_KEY environment variable and supports strict privacy mode
