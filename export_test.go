@@ -16,6 +16,7 @@ var (
 	IsValidCategory         = isValidCategory         // Exports isValidCategory for external tests.
 	OpenRouterProviderError = openRouterProviderError // Exports openRouterProviderError for external tests.
 	IsValidHeaderValue      = isValidHeaderValue      // Exports isValidHeaderValue for external tests.
+	StripCodeFences         = stripCodeFences         // Exports stripCodeFences for external tests.
 )
 
 type (
