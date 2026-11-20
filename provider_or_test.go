@@ -775,6 +775,30 @@ func TestOpenRouterParseHTTPResponseSuccess(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "response reports the model that served the completion",
+			body: `{
+                "model":"closedai/ghj-5",
+                "choices":[{
+                    "message":{"role":"assistant","content":"answer"},
+                    "finish_reason":"stop"
+                }],
+                "usage":{
+                    "prompt_tokens":10,
+                    "completion_tokens":8,
+                    "total_tokens":18
+                }
+            }`,
+			want: tsaiclient.Result{
+				Content: "answer",
+				Model:   "closedai/ghj-5",
+				Usage: tsaiclient.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 8,
+					TotalTokens:      18,
+				},
+			},
+		},
 	}
 	// Iterate over test cases.
 	for _, tt := range tests {
