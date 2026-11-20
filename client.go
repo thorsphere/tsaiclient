@@ -40,6 +40,7 @@ type Client struct {
 // Result holds a normalized completion response.
 type Result struct {
 	Content   string // The raw text returned by the model.
+	Model     string // The identifier of the model that actually served the call, as reported by the provider; empty when the provider reported none.
 	Truncated bool   // True when generation hit MaxCompletionTokens (finish_reason == "length").
 	Usage     Usage  // Token counts and cost for logging/metering.
 }
