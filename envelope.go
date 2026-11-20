@@ -25,6 +25,7 @@ type Envelope struct {
 // metadata. The zero value means no completion was decoded.
 type JSONResult struct {
 	Envelope  Envelope // The decoded structured response.
+	Model     string   // The identifier of the model that actually served the call, as reported by the provider; empty when the provider reported none.
 	Truncated bool     // True when generation hit the token limit (the JSON may be incomplete).
 	Usage     Usage    // Token counts and cost for logging/metering.
 }
@@ -48,7 +49,7 @@ func (c *Client) CompleteJSON(ctx context.Context, req *Request) (JSONResult, er
 	// Complete the request to obtain the normalized completion result.
 	res, err := c.Complete(ctx, req)
 	// Preserve the completion metadata for the returned result.
-	jsonRes := JSONResult{Truncated: res.Truncated, Usage: res.Usage}
+	jsonRes := JSONResult{Model: res.Model, Truncated: res.Truncated, Usage: res.Usage}
 	// Return the metadata and the error when the completion call failed.
 	if err != nil {
 		return jsonRes, err
