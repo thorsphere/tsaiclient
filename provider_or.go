@@ -65,6 +65,7 @@ type openRouterMessage struct {
 // openRouterResponsePayload is the provider chat completion response body.
 // The zero value means no completion was returned.
 type openRouterResponsePayload struct {
+	Model   string `json:"model"` // The identifier of the model that actually served the completion.
 	Choices []struct {
 		Message      openRouterMessage `json:"message"`         // The generated message for this choice.
 		FinishReason string            `json:"finish_reason"`   // Why generation stopped, e.g. "stop" or "length".
@@ -362,6 +363,7 @@ func (p *OpenRouter) ParseHTTPResponse(statusCode int, body []byte) (Result, err
 	// Return the normalized completion result.
 	return Result{
 		Content:   content,
+		Model:     res.Model,
 		Truncated: choice.FinishReason == openRouterFinishReasonLength,
 		Usage: Usage{
 			PromptTokens:     res.Usage.PromptTokens,
