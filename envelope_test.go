@@ -300,3 +300,84 @@ func TestClientCompleteJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestCompleteJSONModel tests that CompleteJSON reports the model returned by
+// the provider on the JSONResult, and reports an empty model when the provider
+// does not report one.
+func TestCompleteJSONModel(t *testing.T) {
+	// Create a valid configuration.
+	validCfg, err := tsaiclient.NewConfig("open/for-5")
+	// Fail the test if creating the configuration fails.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create a valid request for tests.
+	validReq, err := tsaiclient.NewRequest("Hello")
+	// Fail the test if creating the request fails.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Construct a valid HTTP request to return from the stub provider.
+	validHTTPReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.example.com/v1/chat", nil)
+	// Fail the test if creating the HTTP request fails.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Define test cases.
+	tests := []struct {
+		name      string // The name of the test case.
+		model     string // The model reported by the stub provider.
+		wantModel string // The model expected on the returned JSONResult.
+	}{
+		{
+			name:      "provider reports the used model",
+			model:     "closedai/ghj-5",
+			wantModel: "closedai/ghj-5",
+		},
+		{
+			name:      "provider reports no model",
+			model:     "",
+			wantModel: "",
+		},
+	}
+	// Iterate over test cases.
+	for _, tt := range tests {
+		// Run each test case as a serial subtest because httpDo is a package-level seam.
+		t.Run(tt.name, func(t *testing.T) {
+			// Construct a provider that reports the case model.
+			provider := &testProvider{
+				buildFn: func(_ context.Context, _ *tsaiclient.Config, _ *tsaiclient.Request) (*http.Request, error) {
+					return validHTTPReq, nil
+				},
+				parseFn: func(_ int, body []byte) (tsaiclient.Result, error) {
+					return tsaiclient.Result{Content: string(body), Model: tt.model}, nil
+				},
+			}
+			// Create a client with the stub provider.
+			client, err := tsaiclient.NewClient(validCfg, provider)
+			// Fail the test if creating the client fails.
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Install the test HTTP seam returning a valid envelope body.
+			restore := tsaiclient.SetHTTPDo(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"findings":["a"],"confidence":0.5}`)),
+				}, nil
+			})
+			// Restore the previous HTTP execution function when the subtest ends.
+			defer restore()
+			// Execute CompleteJSON under test.
+			got, err := client.CompleteJSON(context.Background(), validReq)
+			// Fail the test if an unexpected error was returned.
+			if err != nil {
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "CompleteJSON", Err: err}))
+			}
+			// Verify the reported model matches the expectation.
+			if got.Model != tt.wantModel {
+				t.Errorf("CompleteJSON model = %q, want %q", got.Model, tt.wantModel)
+			}
+		})
+	}
+}
