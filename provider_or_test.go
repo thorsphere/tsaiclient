@@ -10,10 +10,12 @@ import (
 	"encoding/json" // Import the encoding/json package for JSON handling.
 	"fmt"           // Import the fmt package for formatted I/O.
 	"io"            // Import the io package for I/O operations.
+	"math"          // Import the math package for signed zero and floating-point constants.
 	"net/http"      // Import the net/http package for HTTP requests and responses.
 	"strings"       // Import the strings package for string manipulation.
 	"testing"       // Import the testing package for subtests.
 
+	"github.com/thorsphere/lpstats"    // Import the lpstats package for floating-point pointers.
 	"github.com/thorsphere/tsaiclient" // Import the tsaiclient package for testing.
 	"github.com/thorsphere/tserr"      // Import the tserr package for error handling.
 )
@@ -1061,6 +1063,63 @@ func TestOpenRouterBuildHTTPRequestValidation(t *testing.T) {
 	}
 }
 
+// TestOpenRouterBuildHTTPRequestInvalidTemperature tests that invalid
+// temperatures are rejected before OpenRouter request serialization.
+func TestOpenRouterBuildHTTPRequestInvalidTemperature(t *testing.T) {
+	// Install a valid API key for provider validation.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	// Construct a valid request shared by the serial subtests.
+	req, err := tsaiclient.NewRequest("Hello")
+	// Fail if request construction fails.
+	if err != nil {
+		// Report the unexpected request construction error.
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
+	}
+	// Define invalid temperatures that must fail before JSON marshaling.
+	tests := []struct {
+		name        string  // The name of the test case.
+		temperature float64 // The invalid sampling temperature.
+	}{
+		{name: "NaN", temperature: math.NaN()},
+		{name: "positive infinity", temperature: math.Inf(1)},
+		{name: "negative infinity", temperature: math.Inf(-1)},
+		{name: "below minimum", temperature: -0.1},
+		{name: "above maximum", temperature: 2.1},
+	}
+	// Iterate over the invalid temperature cases.
+	for _, tt := range tests {
+		// Run each case as a serial subtest because the API key is set in the environment.
+		t.Run(tt.name, func(t *testing.T) {
+			// Construct a valid base configuration.
+			cfg, err := tsaiclient.NewConfig("openai/gpt-5")
+			// Fail if configuration construction fails.
+			if err != nil {
+				// Report the unexpected configuration construction error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
+			}
+			// Configure the invalid temperature under test.
+			cfg.WithTemperature(tt.temperature)
+			// Attempt to build a request without sending it.
+			httpReq, err := tsaiclient.NewOpenRouter().BuildHTTPRequest(context.Background(), cfg, req)
+			// Require validation to reject the request.
+			if err == nil {
+				// Report the missing validation error.
+				t.Fatal(tserr.NilFailed("OpenRouter.BuildHTTPRequest"))
+			}
+			// Require the error to identify the temperature field.
+			if !strings.Contains(err.Error(), "temperature") {
+				// Report the unexpected error detail.
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{Var: "OpenRouter.BuildHTTPRequest error", Actual: err.Error(), Want: "temperature"}))
+			}
+			// Require the request to be nil when validation fails.
+			if httpReq != nil {
+				// Report the unexpected request.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "OpenRouter.BuildHTTPRequest request"}))
+			}
+		})
+	}
+}
+
 // TestOpenRouterBuildHTTPRequest tests full OpenRouter request construction.
 func TestOpenRouterBuildHTTPRequest(t *testing.T) {
 	// Install the API key expected in the authorization header.
@@ -1157,19 +1216,19 @@ func TestOpenRouterBuildHTTPRequest(t *testing.T) {
 	}
 	// Decode the payload into a typed test representation.
 	var payload struct {
-		Model    string `json:"model"`
+		Model    string `json:"model"` // The model identifier in the request.
 		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		MaxCompletionTokens int     `json:"max_completion_tokens"`
-		Temperature         float64 `json:"temperature"`
-		ReasoningEffort     string  `json:"reasoning_effort"`
-		SessionID           string  `json:"session_id"`
+			Role    string `json:"role"`    // The conversational role of the message.
+			Content string `json:"content"` // The text content of the message.
+		} `json:"messages"` // The messages sent to the provider.
+		MaxCompletionTokens int      `json:"max_completion_tokens"` // The configured generation limit.
+		Temperature         *float64 `json:"temperature"`           // The optional sampling temperature.
+		ReasoningEffort     string   `json:"reasoning_effort"`      // The configured reasoning effort.
+		SessionID           string   `json:"session_id"`            // The sticky routing session identifier.
 		Provider            struct {
-			DataCollection string `json:"data_collection"`
-			ZDR            bool   `json:"zdr"`
-		} `json:"provider"`
+			DataCollection string `json:"data_collection"` // The provider data collection policy.
+			ZDR            bool   `json:"zdr"`             // Whether zero data retention is required.
+		} `json:"provider"` // The upstream provider preferences.
 	}
 	// Fail if decoding the request payload fails.
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -1191,12 +1250,15 @@ func TestOpenRouterBuildHTTPRequest(t *testing.T) {
 			Want:   128,
 		}))
 	}
+	// Prepare the expected configured sampling temperature.
+	wantTemperature := lpstats.PtrFloat(0.7)
 	// Verify the temperature payload field.
-	if payload.Temperature != 0.7 {
-		t.Fatal(tserr.Equalf(&tserr.EqualfArgs{
+	if !lpstats.NearEqualFloatPtr(payload.Temperature, wantTemperature, 0) {
+		// Report the unexpected temperature.
+		t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
 			Var:    "OpenRouter.BuildHTTPRequest payload temperature",
-			Actual: payload.Temperature,
-			Want:   0.7,
+			Actual: lpstats.FmtFloatPtr(payload.Temperature, 3),
+			Want:   lpstats.FmtFloatPtr(wantTemperature, 3),
 		}))
 	}
 	// Verify the reasoning effort payload field.
@@ -1273,6 +1335,126 @@ func TestOpenRouterBuildHTTPRequest(t *testing.T) {
 	}
 }
 
+// TestOpenRouterBuildHTTPRequestTemperature tests optional temperature
+// omission, explicit values, clearing, and signed-zero normalization.
+func TestOpenRouterBuildHTTPRequestTemperature(t *testing.T) {
+	// Install a valid API key for provider validation.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	// Construct a valid request shared by the serial subtests.
+	req, err := tsaiclient.NewRequest("Hello")
+	// Fail if request construction fails.
+	if err != nil {
+		// Report the unexpected request construction error.
+		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewRequest", Err: err}))
+	}
+	// Define the expected JSON representations of the configured temperatures.
+	tests := []struct {
+		name             string   // The name of the test case.
+		temperature      *float64 // The temperature to configure; nil leaves it unset.
+		clearTemperature bool     // Whether to clear the temperature after configuring it.
+		replacement      *float64 // The optional temperature to configure after any clearing.
+		want             *float64 // The expected decoded temperature; nil means omitted.
+		wantJSON         string   // The exact JSON value for temperature; empty means omitted.
+	}{
+		{name: "unset temperature"},
+		{name: "clear unset temperature", clearTemperature: true},
+		{name: "clear valid temperature", temperature: lpstats.PtrFloat(0.7), clearTemperature: true},
+		{name: "clear invalid temperature", temperature: lpstats.PtrFloat(math.NaN()), clearTemperature: true},
+		{name: "explicit zero", temperature: lpstats.PtrFloat(0.0), want: lpstats.PtrFloat(0.0), wantJSON: "0"},
+		{name: "negative zero", temperature: lpstats.PtrFloat(math.Copysign(0, -1)), want: lpstats.PtrFloat(0.0), wantJSON: "0"},
+		{name: "nonzero temperature", temperature: lpstats.PtrFloat(0.7), want: lpstats.PtrFloat(0.7), wantJSON: "0.7"},
+		{name: "maximum temperature", temperature: lpstats.PtrFloat(2.0), want: lpstats.PtrFloat(2.0), wantJSON: "2"},
+		{name: "set zero after clearing", temperature: lpstats.PtrFloat(0.7), clearTemperature: true, replacement: lpstats.PtrFloat(0.0), want: lpstats.PtrFloat(0.0), wantJSON: "0"},
+		{name: "replace zero with nonzero", temperature: lpstats.PtrFloat(0.0), replacement: lpstats.PtrFloat(0.7), want: lpstats.PtrFloat(0.7), wantJSON: "0.7"},
+	}
+	// Iterate over the temperature cases.
+	for _, tt := range tests {
+		// Run each case as a serial subtest because the API key is set in the environment.
+		t.Run(tt.name, func(t *testing.T) {
+			// Construct a configuration with an initially unset temperature.
+			cfg, err := tsaiclient.NewConfig("openai/gpt-5")
+			// Fail if configuration construction fails.
+			if err != nil {
+				// Report the unexpected configuration construction error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
+			}
+			// Apply the configured temperature when provided.
+			if tt.temperature != nil {
+				// Set the optional sampling temperature.
+				cfg.WithTemperature(*tt.temperature)
+			}
+			// Clear the configured temperature when requested.
+			if tt.clearTemperature {
+				// Restore omission so the provider default applies.
+				cfg.WithoutTemperature()
+			}
+			// Apply a replacement temperature when provided.
+			if tt.replacement != nil {
+				// Verify the setter returns the same configuration for chaining.
+				if got := cfg.WithTemperature(*tt.replacement); got != cfg {
+					// Report an unexpected builder result.
+					t.Errorf("WithTemperature returned %p, want %p", got, cfg)
+				}
+			}
+			// Construct an OpenRouter request without sending it.
+			httpReq, err := tsaiclient.NewOpenRouter().BuildHTTPRequest(context.Background(), cfg, req)
+			// Fail if request construction fails.
+			if err != nil {
+				// Report the unexpected request construction error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "OpenRouter.BuildHTTPRequest", Err: err}))
+			}
+			// Read the generated request body.
+			body, err := io.ReadAll(httpReq.Body)
+			// Fail if reading the request body fails.
+			if err != nil {
+				// Report the unexpected body read error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "read request body", Err: err}))
+			}
+			// Decode a typed representation to compare optional pointer values.
+			var payload struct {
+				Temperature *float64 `json:"temperature"` // The decoded optional sampling temperature.
+			}
+			// Fail if the typed payload cannot be decoded.
+			if err := json.Unmarshal(body, &payload); err != nil {
+				// Report the unexpected payload decoding error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode request payload", Err: err}))
+			}
+			// Verify the decoded temperature, including nil versus explicit zero.
+			if !lpstats.NearEqualFloatPtr(payload.Temperature, tt.want, 0) {
+				// Report the unexpected decoded temperature.
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.BuildHTTPRequest payload temperature",
+					Actual: lpstats.FmtFloatPtr(payload.Temperature, 3),
+					Want:   lpstats.FmtFloatPtr(tt.want, 3),
+				}))
+			}
+			// Decode raw JSON fields to distinguish omission from a null value.
+			var fields map[string]json.RawMessage
+			// Fail if the raw payload cannot be decoded.
+			if err := json.Unmarshal(body, &fields); err != nil {
+				// Report the unexpected field decoding error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode request fields", Err: err}))
+			}
+			// Inspect the presence and raw representation of the temperature field.
+			value, present := fields["temperature"]
+			// Verify the field is present exactly when the temperature is configured.
+			if present != (tt.want != nil) {
+				// Report the unexpected field presence.
+				t.Errorf("temperature field present = %t, want %t", present, tt.want != nil)
+			}
+			// Verify the exact numeric representation, including positive zero.
+			if string(value) != tt.wantJSON {
+				// Report the unexpected JSON representation.
+				t.Error(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "OpenRouter.BuildHTTPRequest JSON temperature",
+					Actual: string(value),
+					Want:   tt.wantJSON,
+				}))
+			}
+		})
+	}
+}
+
 // TestOpenRouterBuildHTTPRequestDefaults tests omitted optional fields and headers.
 func TestOpenRouterBuildHTTPRequestDefaults(t *testing.T) {
 	// Install a valid API key.
@@ -1309,7 +1491,7 @@ func TestOpenRouterBuildHTTPRequestDefaults(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "decode request payload", Err: err}))
 	}
-	// Check that zero-value optional fields are omitted.
+	// Check that unset optional fields are omitted.
 	for _, key := range []string{
 		"max_completion_tokens",
 		"temperature",
