@@ -42,8 +42,9 @@ safe to expose to untrusted input.
   (e.g. "rate limited; retry later", "check that the API key is set correctly").
 - **Prompt-cache affinity**: optional sticky session IDs keep related calls on
   the same upstream routing key.
-- **Minimal footprint**: pure standard library plus
-  [`tserr`](https://github.com/thorsphere/tserr) for error handling.
+- **Minimal footprint**: standard library plus the thorsphere packages
+  [`tserr`](https://github.com/thorsphere/tserr) for error handling and
+  [`lpstats`](https://github.com/thorsphere/lpstats) for floating-point helpers.
 
 
 ---
@@ -85,7 +86,6 @@ func main() {
         log.Fatal(err)
     }
     cfg.WithMaxCompletionTokens(512).
-        WithTemperature(0.7).
         WithReasoningEffort("medium").
         WithTimeout(30 * time.Second)
 
@@ -130,14 +130,15 @@ func main() {
 
 ### Configuration — `Config`
 
-Created with `NewConfig(model)` and customized through chainable `With*`
-builders:
+Created with `NewConfig(model)` and customized through chainable builder
+methods:
 
 | Builder | Description | Constraint |
 |---|---|---|
 | `WithModel(model)` | Model identifier passed to the provider | Non-empty |
 | `WithMaxCompletionTokens(n)` | Cap on generated tokens per call | ≥ 0; `0` means no cap |
-| `WithTemperature(t)` | Sampling temperature | `[0.0, 2.0]` |
+| `WithTemperature(t)` | Set sampling temperature, including an explicit `0.0` | `[0.0, 2.0]`; omitted by default when unset |
+| `WithoutTemperature()` | Clear temperature so the field is omitted | The model or provider default applies |
 | `WithReasoningEffort(e)` | Reasoning effort level | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`; empty omits the field |
 | `WithTimeout(d)` | Per-call deadline | ≥ 0; `0` falls back to the 60s default |
 
