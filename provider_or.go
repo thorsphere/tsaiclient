@@ -16,7 +16,8 @@ import (
 	"slices"        // Import the slices package for slice operations.
 	"strings"       // Import the strings package for string operations.
 
-	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
+	"github.com/thorsphere/lpstats" // Import the lpstats package for floating-point pointers.
+	"github.com/thorsphere/tserr"   // Import the tserr package for error handling.
 )
 
 // Set of OpenRouter-specific constants.
@@ -50,7 +51,7 @@ type openRouterRequestPayload struct {
 	Model               string                  `json:"model"`                           // The model identifier for the request.
 	Messages            []openRouterMessage     `json:"messages"`                        // The conversation messages, oldest first.
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"` // The maximum number of tokens the model may generate; omitted when zero.
-	Temperature         float64                 `json:"temperature,omitempty"`           // The sampling temperature; omitted when zero.
+	Temperature         *float64                `json:"temperature,omitempty"`           // The sampling temperature; omitted when nil.
 	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`      // The reasoning effort level; omitted when empty.
 	SessionID           string                  `json:"session_id,omitempty"`            // The sticky routing key for prompt-cache affinity; omitted when empty.
 	Provider            *openRouterProviderPref `json:"provider,omitempty"`              // Upstream routing and privacy preferences; omitted when nil.
@@ -235,7 +236,7 @@ func (p *OpenRouter) BuildHTTPRequest(ctx context.Context, cfg *Config, req *Req
 		Model:               cfg.model,
 		Messages:            messages,
 		MaxCompletionTokens: cfg.maxCompletionTokens,
-		Temperature:         cfg.temperature,
+		Temperature:         lpstats.CopyFloatPtr(cfg.temperature),
 		ReasoningEffort:     cfg.reasoningEffort,
 		SessionID:           req.sessionID,
 	}
