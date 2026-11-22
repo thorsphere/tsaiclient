@@ -1,2 +1,4 @@
+github.com/thorsphere/lpstats v1.6.2 h1:aEw5Gt5HhJ1c500BWVPsgbp7qka5rxhNfpu6Nr6od6w=
+github.com/thorsphere/lpstats v1.6.2/go.mod h1:UCMwlYmLjwHCB983MJ3Csh+oLlB6Go3GM50DZ8lJuE0=
 github.com/thorsphere/tserr v1.21.11 h1:QMOECuiGrEXZGgM3EOzLiP+RB0LJKMwgcpA8L+EaAOw=
 github.com/thorsphere/tserr v1.21.11/go.mod h1:ntnzXWuuyZYUYT3n/i+1V0xKmn43oyaZC8gvSQTItcw=
