@@ -7,9 +7,11 @@ package tsaiclient_test
 // Import packages.
 import (
 	"math"    // Import the math package for floating-point constants.
+	"strings" // Import the strings package for error detail checks.
 	"testing" // Import the testing package for subtests.
 	"time"    // Import the time package for timeouts.
 
+	"github.com/thorsphere/lpstats"    // Import the lpstats package for floating-point pointers.
 	"github.com/thorsphere/tsaiclient" // Import the tsaiclient package for testing.
 	"github.com/thorsphere/tserr"      // Import the tserr package for error handling.
 )
@@ -84,24 +86,36 @@ func TestConfigValidate(t *testing.T) {
 		name                string        // The name of the test case.
 		model               string        // The model identifier under test.
 		maxCompletionTokens int           // The max completion tokens under test.
-		temperature         float64       // The sampling temperature under test.
+		temperature         *float64      // The optional sampling temperature under test; nil leaves it unset.
+		clearTemperature    bool          // Whether to clear the temperature after setting it.
 		reasoningEffort     string        // The reasoning effort under test.
 		timeout             time.Duration // The per-call timeout under test.
 		wantErr             bool          // Whether an error is expected.
+		wantErrSub          string        // The expected error detail when validation fails.
 	}{
 		{
-			name:                "defaults only",
+			name:                "defaults with temperature unset",
 			model:               "open/for-5",
 			maxCompletionTokens: 0,
-			temperature:         0,
+			temperature:         nil,
 			reasoningEffort:     "",
 			wantErr:             false,
+		},
+		{
+			name:        "explicit positive zero",
+			model:       "open/for-5",
+			temperature: lpstats.PtrFloat(0.0),
+		},
+		{
+			name:        "explicit negative zero",
+			model:       "open/for-5",
+			temperature: lpstats.PtrFloat(math.Copysign(0, -1)),
 		},
 		{
 			name:                "valid custom settings",
 			model:               "open/for-5",
 			maxCompletionTokens: 1024,
-			temperature:         0.7,
+			temperature:         lpstats.PtrFloat(0.7),
 			reasoningEffort:     "medium",
 			wantErr:             false,
 		},
@@ -109,15 +123,27 @@ func TestConfigValidate(t *testing.T) {
 			name:                "reasoning effort trimmed of whitespace",
 			model:               "open/for-5",
 			maxCompletionTokens: 512,
-			temperature:         2.0,
+			temperature:         lpstats.PtrFloat(2.0),
 			reasoningEffort:     "  high  ",
 			wantErr:             false,
+		},
+		{
+			name:             "clear valid temperature",
+			model:            "open/for-5",
+			temperature:      lpstats.PtrFloat(0.7),
+			clearTemperature: true,
+		},
+		{
+			name:             "clear invalid temperature",
+			model:            "open/for-5",
+			temperature:      lpstats.PtrFloat(2.1),
+			clearTemperature: true,
 		},
 		{
 			name:                "empty model via WithModel",
 			model:               "   ",
 			maxCompletionTokens: 100,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "low",
 			wantErr:             true,
 		},
@@ -125,7 +151,7 @@ func TestConfigValidate(t *testing.T) {
 			name:                "negative max completion tokens",
 			model:               "open/for-5",
 			maxCompletionTokens: -1,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "low",
 			wantErr:             true,
 		},
@@ -133,7 +159,7 @@ func TestConfigValidate(t *testing.T) {
 			name:                "invalid reasoning effort",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "ultra",
 			wantErr:             true,
 		},
@@ -141,31 +167,48 @@ func TestConfigValidate(t *testing.T) {
 			name:                "temperature is NaN",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         math.NaN(),
+			temperature:         lpstats.PtrFloat(math.NaN()),
 			reasoningEffort:     "none",
 			wantErr:             true,
+			wantErrSub:          "configuration temperature",
+		},
+		{
+			name:        "temperature is positive infinity",
+			model:       "open/for-5",
+			temperature: lpstats.PtrFloat(math.Inf(1)),
+			wantErr:     true,
+			wantErrSub:  "temperature",
+		},
+		{
+			name:        "temperature is negative infinity",
+			model:       "open/for-5",
+			temperature: lpstats.PtrFloat(math.Inf(-1)),
+			wantErr:     true,
+			wantErrSub:  "temperature",
 		},
 		{
 			name:                "temperature below minimum",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         -0.1,
+			temperature:         lpstats.PtrFloat(-0.1),
 			reasoningEffort:     "minimal",
 			wantErr:             true,
+			wantErrSub:          "temperature",
 		},
 		{
 			name:                "temperature above maximum",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         2.1,
+			temperature:         lpstats.PtrFloat(2.1),
 			reasoningEffort:     "xhigh",
 			wantErr:             true,
+			wantErrSub:          "temperature",
 		},
 		{
 			name:                "whitespace-only reasoning effort trims to omitted",
 			model:               "open/for-5",
 			maxCompletionTokens: 512,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "   ",
 			wantErr:             false,
 		},
@@ -173,7 +216,7 @@ func TestConfigValidate(t *testing.T) {
 			name:                "negative timeout",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "low",
 			timeout:             -1 * time.Second,
 			wantErr:             true,
@@ -182,7 +225,7 @@ func TestConfigValidate(t *testing.T) {
 			name:                "zero timeout falls back to default",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "low",
 			timeout:             0,
 			wantErr:             false,
@@ -191,7 +234,7 @@ func TestConfigValidate(t *testing.T) {
 			name:                "positive timeout",
 			model:               "open/for-5",
 			maxCompletionTokens: 100,
-			temperature:         1.0,
+			temperature:         lpstats.PtrFloat(1.0),
 			reasoningEffort:     "low",
 			timeout:             5 * time.Minute,
 			wantErr:             false,
@@ -207,14 +250,27 @@ func TestConfigValidate(t *testing.T) {
 			cfg, err := tsaiclient.NewConfig("open/for-5")
 			// Fail the test if creating the base configuration fails.
 			if err != nil {
-				t.Fatal(err)
+				// Report the unexpected configuration construction error.
+				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "NewConfig", Err: err}))
 			}
-			// Apply all builder methods under test.
+			// Apply the non-temperature builder methods under test.
 			cfg.WithModel(tt.model).
 				WithMaxCompletionTokens(tt.maxCompletionTokens).
-				WithTemperature(tt.temperature).
 				WithReasoningEffort(tt.reasoningEffort).
 				WithTimeout(tt.timeout)
+			// Set the sampling temperature only when the test case configures one.
+			if tt.temperature != nil {
+				// Apply the configured sampling temperature.
+				cfg.WithTemperature(*tt.temperature)
+			}
+			// Clear the sampling temperature when requested by the test case.
+			if tt.clearTemperature {
+				// Verify clearing returns the same configuration for chaining.
+				if got := cfg.WithoutTemperature(); got != cfg {
+					// Report the unexpected builder result.
+					t.Errorf("WithoutTemperature returned %p, want %p", got, cfg)
+				}
+			}
 			// Validate the configuration.
 			err = cfg.Validate()
 			// Check whether an expected error was missing.
@@ -225,13 +281,22 @@ func TestConfigValidate(t *testing.T) {
 			if !tt.wantErr && err != nil {
 				t.Fatal(tserr.NilExpected(&tserr.NilExpectedArgs{Op: "Validate", Err: err}))
 			}
+			// Verify temperature failures identify the invalid setting.
+			if tt.wantErrSub != "" && err != nil && !strings.Contains(err.Error(), tt.wantErrSub) {
+				// Report the unexpected error detail.
+				t.Fatal(tserr.EqualStr(&tserr.EqualStrArgs{
+					Var:    "Validate error detail",
+					Actual: err.Error(),
+					Want:   tt.wantErrSub,
+				}))
+			}
 		})
 	}
 }
 
 // TestConfigWithBuildersNil tests that WithModel, WithMaxCompletionTokens,
-// WithTemperature, WithReasoningEffort, and WithTimeout safely handle a nil
-// Config receiver.
+// WithTemperature, WithoutTemperature, WithReasoningEffort, and WithTimeout
+// safely handle a nil Config receiver.
 func TestConfigWithBuildersNil(t *testing.T) {
 	// Run test in parallel.
 	t.Parallel()
@@ -241,6 +306,7 @@ func TestConfigWithBuildersNil(t *testing.T) {
 	if got := cfg.WithModel("open/for-5").
 		WithMaxCompletionTokens(100).
 		WithTemperature(0.5).
+		WithoutTemperature().
 		WithReasoningEffort("low").
 		WithTimeout(time.Minute); got != nil {
 		// Fail the test if a non-nil configuration was returned.
