@@ -4,21 +4,18 @@
 
 // Package tsaiclient provides a lightweight, provider-agnostic client for
 // unified AI chat-completion integration. A Client combines a validated
-// Config-model, token cap, temperature, reasoning effort, and per-call
+// Config-model, token cap, optional temperature, reasoning effort, and per-call
 // timeout, with a Provider that formats requests and normalizes responses,
 // and completes prompts through a single deadline-bounded Complete call.
 // Results are normalized into content, truncation status, and token
 // Usage accounting, and CompleteJSON decodes the content further into the
 // standard structured Envelope of findings and confidence. All inputs are
 // validated up front, response bodies are capped, and errors carry
-// actionable guidance without echoing credentials.
-// All inputs are validated up front, response bodies are
-// capped, and errors carry actionable guidance without echoing
-// credentials. The built-in OpenRouter provider reads its API key from the
-// OPENROUTER_API_KEY environment variable and supports strict privacy mode
-// that restricts routing to Zero Data Retention endpoints and forbids
-// upstream data collection. Retry policy is deliberately left to the caller:
-// Complete attempts each call exactly once.
+// actionable guidance without echoing credentials. The built-in OpenRouter
+// provider reads its API key from the OPENROUTER_API_KEY environment variable
+// and supports strict privacy mode that restricts routing to Zero Data
+// Retention endpoints and forbids upstream data collection. Retry policy is
+// deliberately left to the caller: Complete attempts each call exactly once.
 package tsaiclient
 
 // Import packages.
@@ -27,7 +24,8 @@ import (
 	"io"       // Import the io package for reading response bodies.
 	"net/http" // Import the http package for HTTP requests.
 
-	"github.com/thorsphere/tserr" // Import the tserr package for error handling.
+	"github.com/thorsphere/lpstats" // Import the lpstats package for floating-point pointers.
+	"github.com/thorsphere/tserr"   // Import the tserr package for error handling.
 )
 
 // Client holds a configured Provider and its configuration.
@@ -62,8 +60,8 @@ var defaultHTTPClient = &http.Client{}
 // httpDo is the package-level seam for executing HTTP requests.
 var httpDo = defaultHTTPClient.Do
 
-// NewClient returns a Client configured with cfg and provider. It returns an error
-// if cfg or provider is nil or invalid.
+// NewClient returns a Client configured with provider and an independent copy
+// of cfg. It returns an error if cfg or provider is nil or invalid.
 func NewClient(cfg *Config, provider Provider) (*Client, error) {
 	// Return an error if the configuration is nil.
 	if cfg == nil {
@@ -83,6 +81,8 @@ func NewClient(cfg *Config, provider Provider) (*Client, error) {
 	}
 	// Copy the configuration to avoid mutating the original.
 	cfgCopy := *cfg
+	// Copy the optional temperature so the two configurations do not share its value.
+	cfgCopy.temperature = lpstats.CopyFloatPtr(cfg.temperature)
 	// Return the initialized client.
 	return &Client{cfg: &cfgCopy, provider: provider}, nil
 }
