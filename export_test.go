@@ -34,6 +34,18 @@ func (req *Request) GetSessionID() string {
 	return ""
 }
 
+// GetTemperature returns the mutable temperature pointer of cfg for tests,
+// or nil if cfg or its temperature is unset.
+func (cfg *Config) GetTemperature() *float64 {
+	// Return nil when the configuration is nil.
+	if cfg == nil {
+		// Indicate that no temperature is available.
+		return nil
+	}
+	// Expose the stored pointer so tests can verify independent copies.
+	return cfg.temperature
+}
+
 // MaxResponseBytes is the maximum number of bytes read from a response body.
 const MaxResponseBytes = maxResponseBytes
 
