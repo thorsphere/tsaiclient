@@ -24,7 +24,7 @@ const (
 )
 
 // reasoningEffortList is a list of valid reasoning effort levels.
-var reasoningEffortList = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+var reasoningEffortList = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // Config carries the settings for an AI completion client. Temperature is
 // optional and omitted when unset so the model or provider default applies.
